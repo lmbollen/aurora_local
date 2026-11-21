@@ -44,10 +44,14 @@ assert out[0][1]["params"]["s"] == "café", out
 ok("UTF-8 character split across reads is decoded correctly")
 
 p = lib.framing.StreamParser()
-deep = '{"method":"x","params":' + "[" * 100000 + "]" * 100000 + "}"
-out = p.feed(deep.encode())
-assert all(m is None for _, m in out)
-ok("deeply nested JSON is dropped instead of raising")
+deep = '{"method":"x","params":{"a":' + '{"b":' * 5000 + "1" + "}" * 5000 + "}}"
+out = p.feed(deep.encode())  # must not raise, whether or not json parses it
+st = lib.state.AdlarState()
+for _, m in out:
+    if m is not None:
+        st.apply(m)  # nesting beyond MAX_NESTING is ignored, no RecursionError
+assert st.values == {}, st.values
+ok("deeply nested JSON neither raises nor creates fields")
 
 # --- client lifecycle / backoff ---------------------------------------------
 c = lib.client.AdlarClient("x", 1, lambda *a: None)
