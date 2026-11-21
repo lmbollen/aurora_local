@@ -1,0 +1,14 @@
+{
+  "domain": "aurora_local",
+  "name": "Aurora Local (Adlar Castra heat pump)",
+  "after_dependencies": ["recorder"],
+  "codeowners": ["@lmbollen"],
+  "config_flow": true,
+  "dependencies": ["repairs"],
+  "documentation": "https://github.com/lmbollen/aurora_local",
+  "integration_type": "device",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/lmbollen/aurora_local/issues",
+  "requirements": [],
+  "version": "0.8.0"
+}

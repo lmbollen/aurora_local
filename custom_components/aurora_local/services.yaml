@@ -1,0 +1,7 @@
+rebuild_history:
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: aurora_local

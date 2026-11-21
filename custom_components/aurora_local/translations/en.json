@@ -1,0 +1,109 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Adlar Castra heat pump",
+        "description": "An earlier version of this integration (adlar_castra) is installed. Take it over, or add another heat pump.",
+        "menu_options": {
+          "migrate": "Take over the adlar_castra installation",
+          "manual": "Add a heat pump"
+        }
+      },
+      "manual": {
+        "title": "Adlar Castra heat pump",
+        "description": "Enter the IP address of the heat pump's HF-LPT270 Wi-Fi module. Home Assistant only reads data; it never sends commands. Setup can take up to 2 minutes while it waits for the heat pump to report.",
+        "data": {
+          "host": "Host",
+          "port": "Port"
+        },
+        "data_description": {
+          "host": "IP address of the Wi-Fi module, from your router's list of devices. A fixed address (DHCP reservation) is recommended.",
+          "port": "Leave at 8899 unless you know the module uses another port."
+        }
+      },
+      "migrate": {
+        "title": "Take over the adlar_castra integration",
+        "description": "This integration used to be called adlar_castra. Submit to move **{title}** over: its device and entities (same entity IDs, with their history), the temperature calibration and the raw data archive. The adlar_castra entry is removed afterwards. Then remove adlar_castra in HACS (or delete the custom_components/adlar_castra folder) and restart."
+      },
+      "reconfigure": {
+        "title": "Change heat pump address",
+        "description": "Enter the module's new IP address. It must stream this heat pump's device key.",
+        "data": {
+          "host": "Host",
+          "port": "Port"
+        },
+        "data_description": {
+          "host": "New IP address of the Wi-Fi module.",
+          "port": "Leave at 8899 unless you know the module uses another port."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect, or the module closed the connection. Check the IP address and port, and close other programs connected to the module (it accepts only a few connections).",
+      "no_data": "Connected, but the heat pump sent no data within 2 minutes."
+    },
+    "abort": {
+      "already_configured": "This heat pump is already configured.",
+      "reconfigure_successful": "Address updated.",
+      "wrong_device": "That address belongs to a different heat pump (device key doesn't match).",
+      "nothing_to_migrate": "There is no adlar_castra installation left to take over."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options",
+        "description": "Notifications appear in the sidebar's bell when the heat pump goes offline, reports a fault or has low water flow (the binary sensors and events work either way). The subnet search looks for the module on port 8899 of the other addresses in its /24 range after repeated failures (at most every 10 minutes); it only listens, but other devices using port 8899 may notice it. Saved raw data (in the aurora_local_raw folder, about 0.5 MB per day) is needed to rebuild history and for the first calibration.",
+        "data": {
+          "notify": "Show notifications",
+          "scan_subnet": "Search the network when the module's address changes",
+          "raw_log": "Save raw data",
+          "retention_days": "Days to keep raw data (1-3650)"
+        }
+      }
+    }
+  },
+  "issues": {
+    "rebuild_history": {
+      "title": "Rebuild heat pump history?",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Rebuild heat pump history",
+            "description": "This version calculates the corrected history differently. Rebuild the hourly statistics of the heat pump's sensors from the raw data archive? This replaces the hourly history of the temperatures, flow/return difference, heat output, COP (and their '(reported)' twins) and the corrected heat counter for the days the archive covers. Recent detailed history is not changed. You can run it again any time with the aurora_local.rebuild_history action."
+          }
+        },
+        "abort": {
+          "not_loaded": "The integration is not loaded; try again after it has started."
+        }
+      }
+    },
+    "module_moved": {
+      "title": "Heat pump Wi-Fi module moved to a new address",
+      "description": "The module moved from {old} to {new} and was found again by its device key. To avoid gaps, give it a fixed IP address (a DHCP reservation in your router). Ignore this issue once done."
+    }
+  },
+  "exceptions": {
+    "no_archive": {
+      "message": "Saving raw data is turned off, so there is no archive to rebuild history from. Turn on 'Save raw data' in the integration's options."
+    },
+    "no_entry": {
+      "message": "No loaded Aurora Local heat pump matches the request."
+    },
+    "rebuild_failed": {
+      "message": "History rebuild failed: {error}"
+    }
+  },
+  "services": {
+    "rebuild_history": {
+      "name": "Rebuild history",
+      "description": "Recalculate hourly statistics from the raw data archive using the current temperature calibration: corrected values for the normal sensors, the pump's own values for the '(reported)' sensors, and the corrected heat counter. Uses Home Assistant's statistics import; run again after changing the calibration.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Heat pump",
+          "description": "Only this heat pump (default: all)."
+        }
+      }
+    }
+  }
+}

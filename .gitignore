@@ -1,0 +1,34 @@
+# --- Never commit: third-party material and personal data -------------------
+# Vendor app material (copyrighted; also contains personal details)
+/app/
+*.apk
+# Raw heat pump telemetry (timestamps reveal occupancy; contains the device key)
+/data/
+/data2/
+*.jsonl
+*.jsonl.gz
+# Research output derived from that telemetry
+/analysis/out/
+# Machine-specific helpers and experiments, not published
+/analysis/local/
+*.zip
+
+# --- Python / tooling ----------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+
+# --- Nix -------------------------------------------------------------------------
+result
+.direnv/
+
+# --- Editors / OS --------------------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
