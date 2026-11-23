@@ -210,6 +210,20 @@ hold in 97–100 % of the bursts they apply to. Among them:
   ΔT < 0 (95–97 %, the rest is a burst straddling the start or end);
 - the duplicates hold (100 % within the sensor step).
 
+The automatic temperature calibration (outlet reads high) also holds up on
+all data. With the compressor off and no flow, outlet − inlet is +0.9 K
+(IQR 0.8–0.9) on every one of 16 days, at outdoor temperatures from −10 to
++30 °C, and from 5 minutes to many hours after a stop. A pipe-cooling effect
+would fade with time since the stop and change with outdoor temperature, so
+this is a sensor offset. Independently, the refrigerant side agrees: with
+the reported outlet, condensing temperature would be below the leaving
+water in 75 % of steady running (heat can't flow that way); with the
+corrected outlet it is 0.4 K above it (median). The offset grows slightly
+with water temperature (0.8 K below 20 °C, 0.95 K at 28–35 °C, ~1.2 K above
+35 °C from only 7 bursts), so during the boost the correction may be
+~0.2–0.3 K too small. There are almost no bursts with the pump circulating
+and the compressor off (4), so that direct check isn't possible.
+
 The two flow readings don't follow one scale: at `param38` = 0.5 m³/h the
 raw `instantrate` reads ~400, at 0.8 m³/h ~965. The controller's figure
 varies less than the raw one, in both directions.
