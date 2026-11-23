@@ -14,6 +14,7 @@ repository and pass its path.
 |---|---|---|
 | `test_fixes.py`, `test_reconnect.py`, `test_rediscover.py` | Offline checks of the parser, client, calibration, low-flow logic and archive (fake modules on 127.0.0.x; no archive needed) | yes |
 | `test_history.py`, `test_bootstrap.py`, `replay_calibration.py`, `replay_model.py`, `replay_events.py` | Replay an archive through the library and check the results | with `AURORA_ARCHIVE` |
+| `check_consistency.py` | Checks that every field's numbers fit its meaning (31 physical and cross-field rules, e.g. suction ≥ evaporating, pressures equal at rest, fan 0 in defrost) on every burst | with `AURORA_ARCHIVE` |
 | `build_timeseries.py` | Turn an archive into per-field time series (input for the next three) | no |
 | `explore.py`, `hypotheses.py`, `flow_check.py` | The research that established field meanings and units; they take the output folder of `build_timeseries.py` and need pandas | no |
 | `offset_study.py`, `crc_search.py` | How the sensor offset and the `crc` rule were found | no |

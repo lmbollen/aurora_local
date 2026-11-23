@@ -156,8 +156,10 @@ consumed** (for example with Home Assistant's statistics card).
 | Binary sensor | Meaning |
 |---|---|
 | Fault | A fault is active (codes in its attributes) |
-| Low flow warning | Water flow too low for 5 minutes while the compressor runs (see [Alerts](#alerts)) |
+| Low flow warning | Water flow too low for 5 minutes while the compressor runs, not counting defrosts (see [Alerts](#alerts)) |
 | Compressor running | The compressor is on |
+| Defrost | The outdoor unit is defrosting (a few minutes, every 1–2 hours around 0 °C outside); the water briefly cools then |
+| Oil return | The compressor's periodic oil-return cycle, about every 4 hours of running (Diagnostic) |
 | Zone 1, Zone 2 | Heating circuit switched on |
 | AHS (forced heating) | Auxiliary heat source (backup heater) allowed |
 | Holiday mode | Holiday mode is on |
@@ -190,12 +192,6 @@ are used in manual mode; changing one switches calibration to manual.
   circulation pump reads 35 % at standstill, which is a standby value, not a
   speed.
 
-**Defrost** is on while the outdoor unit defrosts (a few minutes, every
-1–2 hours around 0 °C outside); the water briefly cools then, and the
-low-flow warning ignores those minutes. **Oil return** (Diagnostic) is on
-during the compressor's periodic oil-return cycle, about every 4 hours of
-running.
-
 *Electricity consumed (subset)* is disabled by default. The heat pump also
 sends many fields whose meaning isn't known yet. They're created
 automatically as diagnostic sensors but **disabled by default**; enable any
@@ -218,7 +214,9 @@ Devices & services → Aurora Local → Configure**. You then get one when:
   fault that's still active after a restart is shown again.
 - **Low flow warning** turns on: the flow reading below 300 (or more than
   10 K between leaving and return water) for 5 minutes while the compressor
-  runs. It turns off again after 5 minutes of normal flow, and its
+  runs. Defrosts don't count: the flow reading drops then by design, and
+  the timers pause until the defrost ends. It turns off again after 5
+  minutes of normal flow, and its
   notification disappears by itself. On the development unit this came about
   15 minutes before a `P01` fault, so it's an early prompt to check the water
   filter, system pressure and valves.

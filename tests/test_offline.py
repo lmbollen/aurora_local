@@ -37,7 +37,7 @@ def test_offline(script: str) -> None:
 
 @pytest.mark.skipif(not ARCHIVE, reason="set AURORA_ARCHIVE to a raw archive folder")
 @pytest.mark.parametrize("script", ["test_history.py", "test_bootstrap.py", "replay_calibration.py",
-                                    "replay_events.py", "replay_model.py"])
+                                    "replay_events.py", "replay_model.py", "check_consistency.py"])
 def test_replay(script: str) -> None:
     print(_run(script, ARCHIVE))
 

@@ -1,10 +1,13 @@
 # Adlar Castra Aurora III: what we know about the local protocol
 
 Developer material. Findings from probing the heat pump's Wi-Fi module, from
-the first ~36 hours of raw data (recorded with this integration when it was
-still called `adlar_castra`) and from comparing the stream with the vendor
-app. Sections 1–8 are the original research log; where later findings
-changed a conclusion, section 10 or 11 has the current answer.
+raw data recorded with this integration (the first ~36 hours when it was
+still called `adlar_castra`, later 19 days), from comparing the stream with
+the vendor app, and from the Aurora III Modbus register map. Sections 1–4
+and 6–8 are the original research log. Section 5 (`paramN`) is current: it
+was redone on 19 days of data and overrides older statements elsewhere.
+Section 9 was written before it, and sections 10–11 hold the app and
+settings findings.
 
 Confidence labels used below:
 
@@ -92,7 +95,7 @@ the integral of the instantaneous values.
 | `instantpower` | **Electrical input power** | W | Confirmed | Integral 17.3 kWh ≈ `power_use` Δ 17.6 kWh |
 | `instantpower` = `32771` | Sentinel / invalid (`0x8003`) | n/a | Likely | Appeared only during restart attempts in a fault |
 | `energy2` | **Heat output now** | W | Confirmed | 0 when compressor off; integral 87.0 kWh ≈ `energy_use2` Δ 87.1 kWh. **Not a counter.** |
-| `instantrate` | **Water flow** | ~L/h (×1.28?) | Likely | `energy2 ≈ instantrate × ΔT × 1.163 × 1.28`, r = 0.95 |
+| `instantrate` | **Water flow** | ~L/h (×1.28?) | Likely | `energy2 ≈ instantrate × ΔT × 1.163 × 1.28`, r = 0.95 (first data). Reads far below the controller's flow (`param38`) during the radiator boost and in defrost, see §5 |
 | `energy_use2` | **Lifetime heat produced** | 0.01 kWh | Confirmed | 771 kWh at 2026-11-06 |
 | `power_use` | **Lifetime electricity used** | 0.01 kWh | Confirmed | 152 kWh at 2026-11-06 |
 | `power_use12` | Lifetime electricity, subset | 0.01 kWh | Likely | Δ 15.0 kWh vs total 17.6, maybe compressor only |
@@ -161,7 +164,7 @@ are the condensing and evaporating temperatures from `param60` and `param58`
 | `param25` | **Outdoor fan speed**, rpm | Likely | 0 off and in defrost, 400 ± 3, 450 / 500 at higher speed, ~820 briefly after defrost |
 | `param32` | **Circulation pump speed**, % | Likely | 35 standby (no flow), 70 normal, 95–99 when `instantrate` is low |
 | `param37` | Follows the pump command | Unknown | r 0.87 with `param32`: 14–15 / 16–17 / 19–22 at 35 / 70 / 99 % |
-| `param38` | Flow-like | Unknown | r 0.80 with `instantrate`; 0 or 4 standby, 7–8 normal, 9–10 when the pump starts |
+| `param38` | **Actual water flow**, 0.1 m³/h (Modbus 64) | Likely | r 0.80 with `instantrate`; 0 or 4 standby, 7–8 (700–800 L/h) normal, 9–10 when the pump starts |
 | `param39` | Tied to `param38` | Unknown | `param38` + 5 or + 6 (r 0.96) |
 
 ### Event flags
@@ -187,6 +190,30 @@ pump runs at 99 %. A negative ΔT alone is not a reliable defrost signal.
 | `param42`, `param44`–`param46`, `param61` | 65036 (−50.0 °C, probably "sensor not fitted") |
 | `param43` | 65236 (−30.0 °C) |
 
+### Consistency check
+
+`analysis/check_consistency.py` tests these meanings against physics and
+against each other on every burst (17,655 bursts, 4–23 Nov); all 31 rules
+hold in 97–100 % of the bursts they apply to. Among them:
+
+- evaporating temperature = R290 saturation of the low pressure (99.9 %);
+- at rest ≥ 30 min the pressures are equal (99.9 %) and their saturation
+  temperature is near outdoor (99.6 %);
+- steady running: condensing ≥ leaving water − 1.5 K (100 %), evaporating
+  below outdoor (100 %), suction ≥ evaporating (99.9 %), discharge ≥
+  condensing (99.9 %), liquid line between return water and condensing
+  (99.9–100 %), coil between evaporating and outdoor (99.9 %);
+- at rest: compressor current 0, fan 0, expansion valve 480, DC bus = √2 ×
+  mains (99–100 %); running: DC bus above that (100 %); compressor current
+  tracks power (r = 0.988);
+- pump % is 0 exactly when `param9` is 0 (100 %); defrost: fan 0 and water
+  ΔT < 0 (95–97 %, the rest is a burst straddling the start or end);
+- the duplicates hold (100 % within the sensor step).
+
+The two flow readings don't follow one scale: at `param38` = 0.5 m³/h the
+raw `instantrate` reads ~400, at 0.8 m³/h ~965. The controller's figure
+varies less than the raw one, in both directions.
+
 ### Cross-check with the Aurora III Modbus register map
 
 The Aurora III also has an RS-485 Modbus interface. A community Homey app
@@ -207,7 +234,7 @@ match the map's names one to one, which makes them much stronger:
 | `param8` | 51 EXV outlet temperature (T5) | named for cooling; in heating this is the liquid line between plate exchanger and valve |
 | `param9` | 80 Main water pump on/off | |
 | `param10` | 81 Four-way valve on/off | 0 in defrost |
-| `param16` | 77 Compressor phase current, 0.1 A | confirms the correction from "DC current" |
+| `param16` | 77 Compressor phase current, 0.1 A | not DC-link current (see the table above) |
 | `param17` | 74 AC input voltage | = `voltage1` |
 | `param18` | 38 System status, bit 0: oil return | |
 | `param21` | 76 DC bus voltage | |
@@ -337,7 +364,8 @@ implemented (0.7–0.8) unless noted.
 
 ### New features
 
-- Derived sensors: **COP** (instant), **ΔT**, **heat/electric energy today**.
+- Derived sensors: **COP** (instant), **ΔT** (implemented); heat/electric
+  energy today (not implemented: use a utility meter helper).
 - **Fault code** sensor: map `device_fault7` → "P01" and expose the raw fault
   words for unknown codes. Fire an event on change so automations can alert.
 - **Low-flow warning** binary sensor: compressor running and
@@ -458,12 +486,17 @@ the serial line between module and controller with a USB-to-serial adapter.
 
 ## 12. Open questions
 
-1. Labels for most `paramN` fields and the installer table: best source is
-   the pump's own display (photograph each info page and match against the
-   stream at the same minute).
+1. Labels for the remaining `paramN` fields (§5: `param22`, `param24`,
+   `param31`, `param34`, `param37`, `param39`, `param51`, `param53`,
+   `param59`) and the installer table. Sources: the Aurora III Modbus
+   register map (§5), and the pump's own display (photograph each info page
+   and match against the stream at the same minute).
 2. Meaning of `onoff` vs `onoff1` beyond the zone bits, `dmode1`,
    `group1-4`.
-3. Exact unit of `instantrate` (compare with a flow meter).
+3. Exact unit and reliability of `instantrate`: it reads much lower than
+   the controller's own flow (`param38`) during the radiator boost and in
+   defrost (§5, COP and water flow). A separate flow or heat meter would
+   settle it.
 4. Meaning of the E2 installer parameters, including live value P204.
 5. Full fault-bit → display-code table.
 6. The controller's input format (for local control).

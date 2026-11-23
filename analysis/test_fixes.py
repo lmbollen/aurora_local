@@ -71,7 +71,28 @@ t = lib.monitoring.LowFlowTracker(hold=300, clear_hold=300)
 for s in range(0, 601, 30):  # 10 minutes of defrost-like readings
     t.update({"param1": 55, "param10": 0, "instantrate": 100, "temp_in": 300, "temp_out": 260}, now=s)
 assert not t.active(now=600), "defrost must not raise a low-flow warning"
-ok("defrost detection; a defrost doesn't raise a low-flow warning")
+R_DEFROST = {"param1": 55, "param10": 0, "instantrate": 100}
+R_LOW = {"param1": 40, "param10": 1, "instantrate": 200}
+R_GOOD = {"param1": 40, "param10": 1, "instantrate": 800}
+t = lib.monitoring.LowFlowTracker(hold=300, clear_hold=300)
+t.update(R_LOW, now=0)                      # low flow pending...
+for s in range(30, 601, 30):              # ...then a 10-minute defrost
+    t.update(R_DEFROST, now=s)
+assert not t.active(now=610), "a pending warning must not complete during defrost"
+t = lib.monitoring.LowFlowTracker(hold=300, clear_hold=300)
+for s in range(0, 331, 30):
+    t.update(R_LOW, now=s)
+assert t.active(now=330)
+t.update(R_GOOD, now=360)                   # one good reading, then defrost
+for s in range(390, 991, 30):
+    t.update(R_DEFROST, now=s)
+assert t.active(now=1000), "an active warning must not clear during defrost"
+ok("defrost detection; a defrost neither raises nor clears a low-flow warning")
+assert lib.fields.cop_from(1500, 150, 20) == 10.0     # exactly 150 W and 7.5 W/Hz: shown
+assert lib.fields.cop_from(1500, 149, 20) is None      # just below 150 W
+assert lib.fields.cop_from(1500, 240, 40) == 6.25      # exactly 6 W/Hz: shown
+assert lib.fields.cop_from(1500, 239, 40) is None      # just below 6 W/Hz
+ok("COP boundaries: 150 W and 6 W/Hz are inclusive")
 
 # --- client lifecycle / backoff ---------------------------------------------
 c = lib.client.AdlarClient("x", 1, lambda *a: None)

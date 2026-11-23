@@ -1,7 +1,9 @@
 """Meaning of the heat pump's fields (units, scaling, derived values).
 
-Based on docs/adlar-castra-protocol.md: meanings confirmed against the
-vendor app and display, counters checked against integrated values."""
+Based on docs/adlar-castra-protocol.md. The main values are confirmed against
+the vendor app and display, and counters against integrated values; the
+refrigerant-circuit fields were identified from the data and match the
+Aurora III Modbus register names ("likely", not confirmed)."""
 
 from __future__ import annotations
 

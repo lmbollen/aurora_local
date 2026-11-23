@@ -39,7 +39,11 @@ class LowFlowTracker:
         if defrosting(values):
             # During defrost the flow reading drops to ~100 with the pump at
             # full speed and ΔT turns negative: neither start nor end a
-            # warning on these readings.
+            # warning on these readings. Pause both timers, so a pending
+            # change can't complete during the defrost either (active() is
+            # also evaluated between updates); they restart afterwards.
+            self.since = None
+            self.clear_since = None
             return
         reason = None
         if compressor_running(values):

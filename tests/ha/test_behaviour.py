@@ -82,12 +82,21 @@ async def test_refrigerant_sensors_and_generic_cleanup(hass: HomeAssistant) -> N
     assert float(_state(hass, "discharge_temperature").state) == 45.2
     assert float(_state(hass, "coil_temperature").state) == -0.3
     assert float(_state(hass, "compressor_current").state) == 5.7
+    assert float(_state(hass, "suction_temperature").state) == 2.0
+    assert float(_state(hass, "liquid_line_temperature").state) == 28.1
+    # A field that is not covered keeps its (disabled) generic entity
+    _feed(entry, {"param59": 1})
+    await hass.async_block_till_done()
+    assert registry.async_get_entity_id("sensor", DOMAIN, f"{DEVICE_KEY}_param59") is not None
     flow = _state(hass, "water_flow_controller")
     assert float(flow.state) == 0.8 and flow.attributes["unit_of_measurement"] == "m³/h"
     defrost_id = registry.async_get_entity_id("binary_sensor", DOMAIN, f"{DEVICE_KEY}_defrost")
     oil_id = registry.async_get_entity_id("binary_sensor", DOMAIN, f"{DEVICE_KEY}_oil_return")
     assert hass.states.get(defrost_id).state == "on"   # 50 Hz with the four-way valve at 0
     assert hass.states.get(oil_id).state == "off"
+    _feed(entry, {"param18": 1})
+    await hass.async_block_till_done()
+    assert hass.states.get(oil_id).state == "on"
     high = _state(hass, "high_pressure")
     assert float(high.state) == 10.52 and high.attributes["unit_of_measurement"] == "bar"
     assert float(_state(hass, "low_pressure").state) == 3.41

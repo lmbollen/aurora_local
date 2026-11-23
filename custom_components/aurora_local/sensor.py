@@ -1,9 +1,11 @@
 """Sensors for the Adlar Castra heat pump.
 
-Known fields use the meanings confirmed in docs/adlar-castra-protocol.md
-(names as in the Thermomax app, units checked against counters). Every other
-field the heat pump reports gets a generic entity automatically, except known
-duplicates. Parameter tables (the E2 installer table) get one entity each.
+Known fields use the meanings in docs/adlar-castra-protocol.md: confirmed
+against the Thermomax app and counters for the main values, and identified
+from the data and matched to the Aurora III Modbus register names for the
+refrigerant circuit (diagnostic, "likely"). Every other field the heat pump
+reports gets a generic entity automatically, except known duplicates.
+Parameter tables (the E2 installer table) get one entity each.
 """
 
 from __future__ import annotations
@@ -385,7 +387,8 @@ SENSORS: tuple[AdlarSensorDescription, ...] = (
 
 # Raw fields already covered by a sensor above, by a binary sensor, or that
 # duplicate another field (docs §5, checked on 19 days of data). No generic
-# entity for these. param9, param10, param53 and param59 are NOT duplicates.
+# entity for these. param9, param53 and param59 are not duplicates and keep
+# their generic entity; param10 (four-way valve) is covered by Defrost.
 COVERED = {s for d in SENSORS for s in d.sources} | {
     "onoff", "onoff1", "hot", "holiday", "fixtime", "bandUser",
     "param3", "param4", "param17", "param29", "param30", "param48", "param50",
@@ -537,11 +540,13 @@ async def async_setup_entry(
     # as "no longer provided".
     registry = er.async_get(hass)
     prefix = f"{entry.unique_id}_"
+    named = {d.key for d in SENSORS}
     for reg in er.async_entries_for_config_entry(registry, entry.entry_id):
         if reg.domain != "sensor" or not reg.unique_id.startswith(prefix):
             continue
         key = reg.unique_id.removeprefix(prefix)
-        if key in COVERED and key.startswith("param") and key not in {d.key for d in SENSORS}:
+        if key in COVERED and key.startswith("param") and key not in named:
+            _LOGGER.info("Removing %s: field %s now has a named entity", reg.entity_id, key)
             registry.async_remove(reg.entity_id)
 
     entry_id = entry.entry_id
