@@ -113,29 +113,142 @@ Derived values worth exposing:
 
 ## 5. `param1`–`param62`
 
-Many `paramN` fields duplicate named fields (same value ≥ 84% of the time,
-|r| ≥ 0.95); differences are timing within a burst. The rest are candidates
-for compressor/refrigerant data.
+Checked on the full archive (17,667 bursts, 2026-11-04 → 2026-11-23) by two
+independent analyses. None of the refrigerant fields is shown by the vendor
+app, so "Likely" is the best they can be without a manual. Tc and Te below
+are the condensing and evaporating temperatures from `param60` and `param58`
+(R290 saturation curve).
+
+### Duplicates of named fields
+
+| Param | Duplicate of | Evidence |
+|---|---|---|
+| `param3` | `temp_envir2` (outdoor) | 86 % identical, 99 % within ±1; gaps only during fast changes |
+| `param4` | `temp_out` | 72 % identical, 98 % within ±2 |
+| `param17` | `voltage1` | 73 % identical, otherwise ±2/±4 (2 V steps) |
+| `param29` | `temp_box` | 85 % identical, otherwise within the sensor step |
+| `param30` | `temp_in` | 77 % identical, 99 % within ±1 |
+| `param48`, `param50` | `temp_curve2` (target) | 99.65 % identical; mismatches only at setpoint steps |
+| `param57` | `temp_envir1` (room) | 88 % identical, otherwise ±1 |
+| `param47`, `param49` | `temp_curve1` / `temp_curve11` (240) | 100 %, but all four are constant |
+
+**Not duplicates** (they looked like it in the first 36 hours):
 
 | Param | Meaning | Confidence | Evidence |
 |---|---|---|---|
-| `param1` | **Compressor frequency, Hz** | Confirmed (app FreqCompressor) | 0 when off, 40 typical, 91 max; r = 0.91 with power |
-| `param16` | Compressor-related, 0–110 | Likely | r = 0.97 with power |
-| `param3` | = `temp_envir2` (outdoor) | Confirmed | identical 92% |
-| `param4` | = `temp_out` | Confirmed | identical 84% |
-| `param17` | = `voltage1` | Confirmed | |
-| `param29` | = `temp_box` | Confirmed | |
-| `param30` | = `temp_in` | Confirmed | |
-| `param48`, `param50` | = `temp_curve2` (target) | Confirmed | identical 100% |
-| `param57` | = `temp_envir1` | Confirmed | |
-| `param59` | = `device_fault7` | Confirmed | identical 100% |
-| `param9` | = NOT `device_fault7` (run permitted?) | Likely | r = −1.00 |
-| `param10`, `param53` | = `group3` | Likely | 97–99% identical |
-| `param2`, `param8`, `param21`, `param22`, `param25`, `param32`, `param60` | Track compressor on/off | Unknown | refrigerant temps/pressures/EEV steps? |
-| `param5`, `param7`, `param24`, `param33`, `param58` | Track heat output | Unknown | |
-| `param6`, `param7`, `param33` | Hit 65535 (−1) at times | Unknown | sensor-invalid marker? |
-| `param37`–`param39` | Small ints, follow `instantrate` | Unknown | |
-| `param40` = 15, `param42`–`param47`, `param49`, `param61` | Constant | Unknown | 65036 = −50.0 °C → "sensor not fitted"? |
+| `param59` | Status flag, unknown | Unknown | 594 bursts with `param59` = 1 and no fault (19–21 Nov, normal running); on in 74 % of bursts with leaving water 45–50 °C, never below 30 °C or below 10 bar |
+| `param9` | Circulation pump enabled / unit enabled | Likely | 0 exactly when `param32` = 0 (59 of 59 bursts): all P01 bursts and a 42-minute stop without fault |
+| `param10` | **4-way valve in heating position** (0 = defrost) | Likely | 0 in all 33 defrosts while the compressor runs (water ΔT −3.6 K, fan 0, expansion valve 480); otherwise follows `group3` (compressor on) |
+| `param53` | Unknown | Unknown | 95 % equal to `group3`; 0 during defrosts and for hours after some oil returns, 1 during pump after-run |
+
+### Refrigerant circuit and drives
+
+| Param | Meaning | Confidence | Evidence |
+|---|---|---|---|
+| `param1` | **Compressor frequency**, Hz | Confirmed (app) | 0 when off, 15–95 running |
+| `param60` | **High (condensing) pressure**, kPa gauge | Likely | Equal to `param58` at standstill; Tc ≈ leaving water while running |
+| `param58` | **Low (evaporating) pressure**, kPa gauge | Likely | Best-fitting offset 0.99–1.03 bar (atmospheric, so gauge); at standstill Te is 1 K below outdoor |
+| `param33` | **Evaporating temperature**, 0.1 °C, signed | Likely | = Te within 0.1 K (r 1.00): the controller's own conversion of `param58` |
+| `param5` | **Discharge temperature**, 0.1 °C | Likely | Max 88.5 °C, up to 41 K above leaving water (rules out a water-side or plate sensor); never below Tc − 0.5 K; equals Tc when suction superheat < 1 K (normal at low speed with the expansion valve at its 60-step minimum), Tc + 12–15 K when superheat > 2 K |
+| `param6` | **Suction temperature**, 0.1 °C, signed | Likely | Te + 0.7 K median, + 4.6–8 K at 40–70 Hz, 13–17 °C during defrost |
+| `param7` | **Outdoor coil temperature** (defrost sensor), 0.1 °C, signed | Likely | Te + 0.3 K running (r 0.99); stays near 0 °C while ice melts in defrost, then rises to 5–22 °C; outdoor − 0.4 K at standstill |
+| `param8` | **Liquid line temperature** (condenser out), 0.1 °C | Likely | Return water + 1.5 K running (r 0.98); falls to outdoor within ~5 min after a stop while the water stays warm, so refrigerant side |
+| `param22` | High-side value, whole °C, 0 when off | Unknown | Tc + 2.7 K (r 0.97), gap grows with speed (≈ Tc + 0.11 × Hz) |
+| `param24` | Computed value, whole °C steps, 0–22 | Unknown | Not an evaporator sensor (r 0.20 with Te); 0.70 × outdoor + 0.36 × Tc − 10.6 explains 89 % |
+| `param16` | Compressor motor current (phase), 0.1 A | Likely | r 0.99 with power; not DC current (power ÷ (current × `param21`) falls from 1.02 to 0.79 with load) |
+| `param21` | **DC bus voltage**, V | Likely | 315 V at standstill (= 1.414 × mains − 3 V); 334–353 V running |
+| `param2` | **Expansion valve opening**, steps | Likely | 480 at rest and during defrost/oil return; ~200 at start, then 60 (58 % of running time, a minimum) |
+| `param25` | **Outdoor fan speed**, rpm | Likely | 0 off and in defrost, 400 ± 3, 450 / 500 at higher speed, ~820 briefly after defrost |
+| `param32` | **Circulation pump speed**, % | Likely | 35 standby (no flow), 70 normal, 95–99 when `instantrate` is low |
+| `param37` | Follows the pump command | Unknown | r 0.87 with `param32`: 14–15 / 16–17 / 19–22 at 35 / 70 / 99 % |
+| `param38` | Flow-like | Unknown | r 0.80 with `instantrate`; 0 or 4 standby, 7–8 normal, 9–10 when the pump starts |
+| `param39` | Tied to `param38` | Unknown | `param38` + 5 or + 6 (r 0.96) |
+
+### Event flags
+
+| Param | Meaning | Confidence | Evidence |
+|---|---|---|---|
+| `param18` | **Oil return** | Likely | 55 events mid-run, ~5 bursts each with the expansion valve at 480; every 248 min of compressor run time (median) |
+| `param51` | Defrost variant flag | Likely | Set in 12 of 33 defrosts (11 of them the 55 Hz type) |
+| `param34` | Idle-only flag | Unknown | 7 windows of 20–30 min, compressor off, pump standby, outdoor −1.7 to 5 °C |
+| `param31` | Near-constant 10 | Unknown | 0 for one burst after a compressor stop (40×); 439 once during P01 |
+
+Defrost (33 events, 5–23 Nov, every 0.9–1.9 h around 0 °C outdoor, 3–5
+minutes each): `param10` = 0, compressor at 55 or 65 Hz, outdoor fan off,
+expansion valve 480, water ΔT −3 to −5 K, `instantrate` ≈ 100 although the
+pump runs at 99 %. A negative ΔT alone is not a reliable defrost signal.
+
+### Constant
+
+| Param | Value |
+|---|---|
+| `param11`–`param15`, `param19`, `param20`, `param23`, `param26`–`param28`, `param35`, `param36`, `param41`, `param52`, `param54`–`param56`, `param62` | 0 |
+| `param40` | 15 |
+| `param42`, `param44`–`param46`, `param61` | 65036 (−50.0 °C, probably "sensor not fitted") |
+| `param43` | 65236 (−30.0 °C) |
+
+### Cross-check with the Aurora III Modbus register map
+
+The Aurora III also has an RS-485 Modbus interface. A community Homey app
+publishes its input-register map with names and units
+([org.hhi.adlar3-heatpump-modbus](https://github.com/hhi/org.hhi.adlar3-heatpump-modbus),
+`lib/aurora3/protocol/adlar3-modbus-registers.ts`). The Wi-Fi `paramN`
+numbers don't follow the register numbers, but the meanings found above
+match the map's names one to one, which makes them much stronger:
+
+| Param | Modbus input register | Notes |
+|---|---|---|
+| `param1` | 79 Compressor actual frequency, Hz | |
+| `param2` | 70 Main EEV open degree, pulses | |
+| `param3` | 50 Ambient temperature (T4) | |
+| `param5` | 52 Compressor discharge temperature (TP) | confirms discharge |
+| `param6` | 53 Compressor suction temperature (TH) | confirms suction |
+| `param7` | 49 Outdoor unit coil temperature (T3) | |
+| `param8` | 51 EXV outlet temperature (T5) | named for cooling; in heating this is the liquid line between plate exchanger and valve |
+| `param9` | 80 Main water pump on/off | |
+| `param10` | 81 Four-way valve on/off | 0 in defrost |
+| `param16` | 77 Compressor phase current, 0.1 A | confirms the correction from "DC current" |
+| `param17` | 74 AC input voltage | = `voltage1` |
+| `param18` | 38 System status, bit 0: oil return | |
+| `param21` | 76 DC bus voltage | |
+| `param25` | 72 DC fan speed, rpm | |
+| `param30` | 42 Return water temperature (TE1) | |
+| `param32` | 62 PWM percentage of DC water pump | |
+| `param37` | 63 PWM feedback of DC water pump (0.1 m³/h per the map) | 14–20 → 1.4–2.0? meaning unclear |
+| `param38` | 64 Actual water flow, 0.1 m³/h | a second flow reading, 7–8 normally (700–800 L/h) |
+| `param58` | 87 Low pressure, kPa | |
+| `param60` | 86 High pressure, kPa | |
+| `param34` | 38 bit 2 anti-freeze? | candidate: idle, pump on standby, outdoor −1.7 to 5 °C |
+| `param51` | 38 bit 1 defrost? | candidate, but set in only 12 of 33 defrosts |
+| `param24` | 71 Auxiliary (EVI) EEV open degree? | candidate: 0–220 in steps of 10 |
+
+`param33` (evaporating temperature) and `param22` have no named register;
+the map's reserved registers 54/55 may be the saturation temperatures. The
+map also has inlet/outlet water pressure (registers 60/61, marked reserved);
+no Wi-Fi field behaves like a water pressure, so this unit probably doesn't
+report one.
+
+### COP and water flow
+
+At the same lift and compressor speed the measured COP is about 2 points
+lower when `instantrate` is low. This is most likely a **measurement
+artefact**, not lost efficiency: in cells matched on compressor speed and
+both refrigerant pressures (the same refrigerant cycle), electrical power is
+equal (+2 %) and the outdoor coil is at least as far below air temperature,
+yet the reported heat is 42 % lower. The water ΔT is smaller then (2.2 vs
+3.4 K), so the heat can only be equal if the real flow is about 1,250 L/h
+while `instantrate` reads about 510. The flow reading (or the heat figure
+built on it) under-reads in these conditions, mostly when the target flow
+temperature is raised and the circulation pump runs at 95–99 %; it also
+reads ≈ 100 during defrost with the pump at 99 %. Based on few matched cells
+(3–15 depending on binning). A separate heat meter would settle it. Real
+flow stoppages also happen (the P01 faults of 6 Nov had ΔT 15 K).
+
+The second flow reading (`param38`, Modbus "actual water flow") also drops
+at those times, but less: median 5 (≈ 500 L/h) when `instantrate` reads
+below 450, against 7–8 normally. It probably comes from the same flow
+sensor, so it doesn't settle the question either; it does suggest the flow
+really falls by about a third, not by the 60 % that `instantrate` shows.
 
 ## 6. Settings block (since 2026-11-05 07:42)
 

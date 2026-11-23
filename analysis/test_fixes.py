@@ -53,6 +53,26 @@ for _, m in out:
 assert st.values == {}, st.values
 ok("deeply nested JSON neither raises nor creates fields")
 
+# --- refrigerant fields --------------------------------------------------------
+assert lib.fields.pressure_bar({"param60": 1052}, "param60") == 10.52
+assert lib.fields.pressure_bar({"param60": 65535}, "param60") is None
+assert lib.fields.pressure_bar({"param60": -5}, "param60") is None
+assert lib.fields.pressure_bar({}, "param60") is None
+ok("refrigerant pressure in bar; out-of-range values are not readings")
+
+assert lib.fields.defrosting({"param1": 55, "param10": 0}) is True
+assert lib.fields.defrosting({"param1": 40, "param10": 1}) is False
+assert lib.fields.defrosting({"param1": 7, "param10": 0}) is False      # first burst of a start
+assert lib.fields.defrosting({"param1": 0, "param10": 0}) is False      # off
+assert lib.fields.defrosting({"param1": 40}) is None
+assert lib.fields.tenths({"param16": 57}, "param16") == 5.7
+assert lib.fields.tenths({"param16": 65535}, "param16") is None
+t = lib.monitoring.LowFlowTracker(hold=300, clear_hold=300)
+for s in range(0, 601, 30):  # 10 minutes of defrost-like readings
+    t.update({"param1": 55, "param10": 0, "instantrate": 100, "temp_in": 300, "temp_out": 260}, now=s)
+assert not t.active(now=600), "defrost must not raise a low-flow warning"
+ok("defrost detection; a defrost doesn't raise a low-flow warning")
+
 # --- client lifecycle / backoff ---------------------------------------------
 c = lib.client.AdlarClient("x", 1, lambda *a: None)
 assert c.backoff_delay(1025) == 3600 and c.backoff_delay(10**6) == 3600
@@ -95,12 +115,16 @@ assert lib.fields.quiet_mode({"functionadd": 7}) is None and lib.fields.quiet_mo
 ok("unknown quiet-mode value gives None (valid for the ENUM sensor)")
 
 run = {"param1": 40, "temp_in": 300, "temp_out": 330, "instantrate": 500}
-assert lib.fields.cop({**run, "energy2": 5203, "instantpower": 244}) is None
+assert lib.fields.cop({**run, "param1": 45, "energy2": 5203, "instantpower": 244}) is None  # seen 11-21
 assert lib.fields.cop({**run, "energy2": 0, "instantpower": 900}) is None
 assert lib.fields.cop({**run, "energy2": 3000, "instantpower": 1000}) == 3.0
+assert lib.fields.cop({**run, "param1": 15, "energy2": 1555, "instantpower": 257}) == 6.05
+assert lib.fields.cop({**run, "param1": 15, "energy2": 1555, "instantpower": 120}) is None
+assert lib.fields.cop({**run, "param1": 0, "energy2": 1555, "instantpower": 257}) is None
 cal = lib.calibration.Calibration()
 assert cal.corrected({**run, "energy2": 0, "instantpower": 900}, 0)["cop"] is None
-ok("COP is unknown at low power (<300 W) or zero heat")
+assert cal.corrected({**run, "param1": 15, "energy2": 1555, "instantpower": 257}, 0)["cop"] is not None
+ok("COP shown at minimum speed (~250 W); unknown in standby, while ramping or at zero heat")
 
 t = lib.monitoring.LowFlowTracker(hold=300, clear_hold=300)
 low = {"param1": 40, "instantrate": 200}

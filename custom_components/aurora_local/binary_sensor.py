@@ -72,6 +72,21 @@ BINARY_SENSORS: tuple[AdlarBinaryDescription, ...] = (
         value_fn=lambda c: M.compressor_running(_values(c)),
     ),
     AdlarBinaryDescription(
+        key="defrost",
+        name="Defrost",
+        device_class=BinarySensorDeviceClass.RUNNING,
+        icon="mdi:snowflake-melt",
+        value_fn=lambda c: M.defrosting(_values(c)),
+    ),
+    AdlarBinaryDescription(
+        key="oil_return",
+        name="Oil return",
+        device_class=BinarySensorDeviceClass.RUNNING,
+        icon="mdi:oil",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda c: M.flag(_values(c), M.OIL_RETURN),
+    ),
+    AdlarBinaryDescription(
         key="zone_1",
         name="Zone 1",
         device_class=BinarySensorDeviceClass.POWER,

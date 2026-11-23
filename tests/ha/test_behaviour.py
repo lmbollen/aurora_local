@@ -66,6 +66,40 @@ async def test_burst_updates_corrected_and_reported_sensors(hass: HomeAssistant)
     assert _state(hass, "fault_code").state == "none"
 
 
+async def test_refrigerant_sensors_and_generic_cleanup(hass: HomeAssistant) -> None:
+    # An older version created a generic (disabled) entity for param60
+    registry = er.async_get(hass)
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=DEVICE_KEY, data=DATA, options=OPTIONS, minor_version=2)
+    entry.add_to_hass(hass)
+    old = registry.async_get_or_create("sensor", DOMAIN, f"{DEVICE_KEY}_param60", config_entry=entry)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert registry.async_get(old.entity_id) is None
+    _feed(entry, {**BURST, "param60": 1052, "param58": 341, "param33": 65531, "param21": 344,
+                  "param2": 65, "param25": 400, "param32": 70, "param5": 452, "param6": 20,
+                  "param7": 65533, "param8": 281, "param16": 57, "param38": 8, "param10": 0, "param18": 0})
+    await hass.async_block_till_done()
+    assert float(_state(hass, "discharge_temperature").state) == 45.2
+    assert float(_state(hass, "coil_temperature").state) == -0.3
+    assert float(_state(hass, "compressor_current").state) == 5.7
+    flow = _state(hass, "water_flow_controller")
+    assert float(flow.state) == 0.8 and flow.attributes["unit_of_measurement"] == "m³/h"
+    defrost_id = registry.async_get_entity_id("binary_sensor", DOMAIN, f"{DEVICE_KEY}_defrost")
+    oil_id = registry.async_get_entity_id("binary_sensor", DOMAIN, f"{DEVICE_KEY}_oil_return")
+    assert hass.states.get(defrost_id).state == "on"   # 50 Hz with the four-way valve at 0
+    assert hass.states.get(oil_id).state == "off"
+    high = _state(hass, "high_pressure")
+    assert float(high.state) == 10.52 and high.attributes["unit_of_measurement"] == "bar"
+    assert float(_state(hass, "low_pressure").state) == 3.41
+    assert float(_state(hass, "evaporating_temperature").state) == -0.5   # signed 16-bit
+    assert float(_state(hass, "dc_bus_voltage").state) == 344
+    assert float(_state(hass, "expansion_valve").state) == 65
+    assert float(_state(hass, "outdoor_fan_speed").state) == 400
+    assert float(_state(hass, "circulation_pump_speed").state) == 70
+    # No generic entity is created for a field that has a named sensor
+    assert registry.async_get_entity_id("sensor", DOMAIN, f"{DEVICE_KEY}_param60") is None
+
+
 async def test_fault_code_unknown_before_fault_data(hass: HomeAssistant) -> None:
     entry = await _setup(hass)
     _feed(entry, {k: v for k, v in BURST.items() if k != "device_fault7"})

@@ -23,5 +23,8 @@ print(f"bootstrap took {time.time() - t:.1f}s; fields {len(values)}; samples {le
 print(f"auto offset {cal.auto_offset(last_ts)} K; calibrated heat {energy.kwh:.1f} kWh")
 size = len(json.dumps(cal.to_dict()))
 print(f"stored calibration size: {size / 1024:.0f} KB")
-assert 0.8 <= cal.auto_offset(last_ts) <= 0.9 and 600 < energy.kwh < 700
+# Per day, so the check doesn't depend on how long the archive is (the
+# development unit makes ~25-60 kWh of heat a day in November).
+days = (last_ts - min(ts for ts, _ in cal.samples)) / 86400
+assert 0.8 <= cal.auto_offset(last_ts) <= 0.9 and days > 1 and 15 < energy.kwh / days < 80, energy.kwh / days
 print("OK")

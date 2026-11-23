@@ -138,7 +138,7 @@ twin sensor named "(reported)" under *Diagnostic*.
 | DHW tank temperature | Domestic hot water tank sensor |
 | Electrical power | Power the heat pump uses now, in W |
 | Heat output | Heat it delivers now, in W (corrected) |
-| COP | Heat output ÷ electrical power (corrected). Only while the compressor runs with at least 300 W and delivers heat; otherwise *unknown*, because the two readings don't line up when it starts or stops |
+| COP | Heat output ÷ electrical power (corrected). Only while the compressor runs and delivers heat; *unknown* in standby (below 150 W) and while the compressor speeds up or slows down, when the two readings don't line up |
 | Electricity consumed | The heat pump's own lifetime electricity counter, kWh |
 | Heat produced since install (corrected) | Heat delivered, kWh (corrected), counted by this integration from its first start. It doesn't count while Home Assistant is off |
 | Compressor frequency, Compressor run time | Compressor speed (Hz) and total running time |
@@ -175,7 +175,26 @@ are used in manual mode; changing one switches calibration to manual.
 - **Installer parameters**: the number of installer (E2) parameters the
   heat pump reported; the values are in its attributes (P1, P2, …) for
   reference, but their meanings aren't documented;
-- raw mode values and curve temperatures whose meaning isn't confirmed.
+- raw mode values and curve temperatures whose meaning isn't confirmed;
+- the refrigerant circuit and drives: **Refrigerant high pressure** and
+  **Refrigerant low pressure** (bar, gauge; at standstill both settle at the
+  same value), **Evaporating temperature**, **DC bus voltage**, **Expansion
+  valve opening**, **Outdoor fan speed** and **Circulation pump speed** (%).
+  Also **Compressor discharge / suction temperature**, **Outdoor coil
+  temperature**, **Liquid line temperature**, **Compressor current** and
+  **Water flow (controller)**, the controller's own flow figure in m³/h
+  (0.1 m³/h steps), next to *Water flow (raw)*.
+  The vendor app doesn't show these. Their meanings were worked out from the
+  data and match the names in the Aurora III Modbus register map (see the
+  protocol notes), so treat them as very likely rather than confirmed. The
+  circulation pump reads 35 % at standstill, which is a standby value, not a
+  speed.
+
+**Defrost** is on while the outdoor unit defrosts (a few minutes, every
+1–2 hours around 0 °C outside); the water briefly cools then, and the
+low-flow warning ignores those minutes. **Oil return** (Diagnostic) is on
+during the compressor's periodic oil-return cycle, about every 4 hours of
+running.
 
 *Electricity consumed (subset)* is disabled by default. The heat pump also
 sends many fields whose meaning isn't known yet. They're created
@@ -353,7 +372,7 @@ retention period), that counter's history is left as it is.
 |---|---|
 | Setup fails | See the table under [Setup](#setup). |
 | Entities *unavailable* | No data for 5 minutes. Check **Connection** and its *last error*; press **Reconnect now**. |
-| COP *unknown* | Normal while the compressor is off, starting or stopping (below 300 W), or delivers no heat. |
+| COP *unknown* | Normal while the compressor is off or in standby (below 150 W), while it speeds up or slows down, or when it delivers no heat. |
 | Heat produced since install is far below Heat produced, lifetime (reported) | Expected: one counts since this integration started and is corrected, the other since the heat pump was installed. |
 | Heat output or COP look wrong | Check **Temperature calibration offset**. Switch to manual if needed, then run the rebuild action (see [History](#temperature-calibration)). |
 | Quiet mode / zones / AHS / holiday *unknown* | They appear after the heat pump next reports them (see [First steps](#first-steps)). |

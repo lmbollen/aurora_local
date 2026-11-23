@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from .fields import compressor_running, delta_t, fault_codes, num
+from .fields import compressor_running, defrosting, delta_t, fault_codes, num
 
 # Low-flow warning thresholds (P01 on 2026-11-06 was preceded by flow
 # ~240 and ΔT 15 K while the compressor ran at 91 Hz).
@@ -36,6 +36,11 @@ class LowFlowTracker:
     def update(self, values: dict[str, Any], now: float | None = None, dt: float | None = None) -> None:
         """`dt` overrides the raw ΔT (pass the calibrated one)."""
         now = time.monotonic() if now is None else now
+        if defrosting(values):
+            # During defrost the flow reading drops to ~100 with the pump at
+            # full speed and ΔT turns negative: neither start nor end a
+            # warning on these readings.
+            return
         reason = None
         if compressor_running(values):
             flow = num(values, "instantrate")

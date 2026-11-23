@@ -131,7 +131,7 @@ class Calibration:
                 heat = heat_raw
             elif raw_dt is not None and c_dt is not None and raw_dt > MIN_DELTA_FOR_SCALING:
                 heat = max(0, round(heat_raw * c_dt / raw_dt))
-        cop_c = cop_from(heat, electrical_power(values), compressor_running(values))
+        cop_c = cop_from(heat, electrical_power(values), compressor_hz(values))
         return {"temp_in": c_in, "temp_out": c_out, "delta_t": c_dt, "heat": heat, "cop": cop_c}
 
     # -- persistence -----------------------------------------------------------
