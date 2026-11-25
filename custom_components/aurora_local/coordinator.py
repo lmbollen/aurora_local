@@ -50,14 +50,22 @@ from .pyauroralocal import (
     FaultTracker,
     RawLogger,
 )
-from .pyauroralocal.calibration import Calibration, EnergyIntegrator
+from .pyauroralocal.calibration import Calibration, DailyEnergy, EnergyIntegrator, energy_cop
 from .pyauroralocal.client import STALE_AFTER
-from .pyauroralocal.fields import CONFIRMED_CODES
+from .pyauroralocal.fields import CONFIRMED_CODES, counter_kwh
 from .pyauroralocal.monitoring import LOW_FLOW_HOLD_SECONDS, FaultChange, LowFlowTracker
 
 _LOGGER = logging.getLogger(__name__)
 SAVE_DELAY = 300  # seconds; worst-case data loss on a crash
 SAVE_SOON = 5
+# After midnight, wait this long before rewriting the finished day's hourly
+# COP statistics, so the recorder has compiled the day's last hour first.
+DAILY_WRITE_DELAY = 15 * 60
+
+
+def local_day(ts: float) -> str:
+    """Local (Home Assistant time zone) date of an epoch, as YYYY-MM-DD."""
+    return dt_util.as_local(dt_util.utc_from_timestamp(ts)).date().isoformat()
 
 FAULT_HINTS = {
     "P01": "Water flow protection (seen on this unit when flow collapsed). "
@@ -102,6 +110,9 @@ class AdlarCoordinator(DataUpdateCoordinator[AdlarState]):
         self._store: Store[dict[str, Any]] = Store(hass, STORE_VERSION, f"{DOMAIN}.{entry.entry_id}")
         self._unsub_flush: Any = None
         self.processor = BurstProcessor()  # calibration, calibrated heat, low flow
+        self.daily = DailyEnergy()  # heat and electricity per local day (COP today)
+        self._daily_pending: tuple[str, float, float] | None = None  # day to write to statistics
+        self._daily_write: Any = None
         self._low_flow_was_active = False
         self.faults = FaultTracker()
         self.history_version = 0
@@ -142,6 +153,8 @@ class AdlarCoordinator(DataUpdateCoordinator[AdlarState]):
             EVENT_HOMEASSISTANT_STOP, self._async_on_ha_stop
         )
         self._started_at = time.monotonic()
+        if self._daily_pending is not None:  # a finished day not yet written (restart after midnight)
+            self._schedule_daily_write()
         self.client.start()
 
     def _restore(self, stored: dict[str, Any]) -> None:
@@ -176,6 +189,11 @@ class AdlarCoordinator(DataUpdateCoordinator[AdlarState]):
         except (TypeError, ValueError):
             self.history_version = 0
         self.migrations = {m for m in stored.get("migrations", []) if isinstance(m, str)}
+        self.daily.load(stored.get("daily"))
+        pending = stored.get("daily_pending")
+        if (isinstance(pending, list) and len(pending) == 3 and isinstance(pending[0], str)
+                and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in pending[1:])):
+            self._daily_pending = (pending[0], float(pending[1]), float(pending[2]))
 
     async def _async_restore_from_archive(self, has_calibration: bool) -> None:
         """Apply the archive's newest values on top of the snapshot (the archive
@@ -226,7 +244,7 @@ class AdlarCoordinator(DataUpdateCoordinator[AdlarState]):
             self._unsub_flush()
             self._unsub_flush = None
         await self._async_flush_raw()
-        for attr in ("_save_handle", "_history_retry"):
+        for attr in ("_save_handle", "_history_retry", "_daily_write"):
             handle = getattr(self, attr)
             if handle is not None:
                 handle()
@@ -278,6 +296,8 @@ class AdlarCoordinator(DataUpdateCoordinator[AdlarState]):
             "heat_calibrated_kwh": round(self.heat_energy.kwh, 4),
             "history_version": self.history_version,
             "migrations": sorted(self.migrations),
+            "daily": self.daily.to_dict(),
+            "daily_pending": list(self._daily_pending) if self._daily_pending else None,
         }
 
     @callback
@@ -301,6 +321,34 @@ class AdlarCoordinator(DataUpdateCoordinator[AdlarState]):
         await self._store.async_save(self._store_data())
 
     # -- history ---------------------------------------------------------
+
+    @callback
+    def _schedule_daily_write(self) -> None:
+        """Rewrite the finished day's hourly "COP today" statistics with the
+        day's energy-based COP (see history_import.async_write_daily_cop)."""
+        if self._daily_write is not None or self._stopped:
+            return
+
+        async def _write(_now: datetime) -> None:
+            self._daily_write = None
+            pending = self._daily_pending
+            if pending is None or self._stopped:
+                return
+            cop = energy_cop(pending[1], pending[2])
+            if cop is not None:
+                from .history_import import async_write_daily_cop  # needs recorder; import lazily
+
+                try:
+                    rows = await async_write_daily_cop(self, pending[0], cop)
+                except Exception:  # keep it pending; retried at the next start
+                    _LOGGER.warning("Could not write the daily COP for %s", pending[0], exc_info=True)
+                    return
+                _LOGGER.info("Daily COP %s: %.2f (%.2f kWh heat / %.2f kWh electricity), %d hours written",
+                             pending[0], cop, pending[1], pending[2], rows)
+            self._daily_pending = None
+            self.request_save(SAVE_SOON)
+
+        self._daily_write = async_call_later(self.hass, DAILY_WRITE_DELAY, _write)
 
     @callback
     def schedule_energy_history_retry(self) -> None:
@@ -435,7 +483,12 @@ class AdlarCoordinator(DataUpdateCoordinator[AdlarState]):
     @callback
     def _handle_burst(self, state: AdlarState) -> None:
         """Once per measurement burst: derived values, alerts, entity update."""
-        self.processor.process(state.values, time.time(), time.monotonic())
+        now = time.time()
+        self.processor.process(state.values, now, time.monotonic())
+        done = self.daily.add(local_day(now), now, self.heat_energy.kwh, counter_kwh(state.values, "power_use"))
+        if done is not None:
+            self._daily_pending = done
+            self._schedule_daily_write()
         self._check_faults(state)
         self._check_low_flow()
         self._check_offline()

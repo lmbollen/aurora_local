@@ -148,6 +148,22 @@ def counter_kwh(values: dict[str, Any], key: str) -> float | None:
     return None if v is None else round(v / 100, 2)
 
 
+# The pump's own heat figure (energy2) is HEAT_W_PER_FLOW2_K × param38 × ΔT:
+# r 0.99 over all running data, against 0.55 for instantrate × ΔT, so the pump
+# computes heat from the controller's flow reading. Used where energy2 can't
+# be used: in defrost it stays at a fixed ~690 W while the water is cooled by
+# 3-6 K, and below ~0.3 K of ΔT scaling it by the corrected ΔT is unreliable.
+HEAT_W_PER_FLOW2_K = 133
+
+
+def heat_from_flow(values: dict[str, Any], delta: float | None) -> int | None:
+    """Heat in W from the controller's flow reading and a ΔT (negative: water cooled)."""
+    flow = num(values, WATER_FLOW_2)
+    if flow is None or delta is None or not 0 <= flow < POWER_INVALID_FROM:
+        return None
+    return round(HEAT_W_PER_FLOW2_K * flow * delta)
+
+
 def quiet_mode(values: dict[str, Any]) -> str | None:
     v = num(values, "functionadd")
     if v is None:

@@ -8,8 +8,10 @@ from .fields import (
     compressor_hz,
     compressor_running,
     cop_from,
+    defrosting,
     delta_t,
     electrical_power,
+    heat_from_flow,
     heat_output,
     num,
     temp,
@@ -126,11 +128,21 @@ class Calibration:
         c_dt = None if u_in is None or u_out is None else round(u_out - u_in, 2)
         heat_raw = heat_output(values)
         heat = None
-        if heat_raw is not None:
+        if defrosting(values):
+            # The pump reports ~+690 W here while the water is being cooled:
+            # count the heat taken from the water, as a negative output.
+            heat = heat_from_flow(values, c_dt)
+        elif heat_raw is not None:
             if heat_raw == 0 or not compressor_running(values):
                 heat = heat_raw
             elif raw_dt is not None and c_dt is not None and raw_dt > MIN_DELTA_FOR_SCALING:
                 heat = max(0, round(heat_raw * c_dt / raw_dt))
+            else:
+                # ΔT too small to scale the pump's figure: same formula the
+                # pump uses, from the corrected ΔT (never negative here: the
+                # compressor is heating).
+                flow_heat = heat_from_flow(values, c_dt)
+                heat = None if flow_heat is None else max(0, flow_heat)
         cop_c = cop_from(heat, electrical_power(values), compressor_hz(values))
         return {"temp_in": c_in, "temp_out": c_out, "delta_t": c_dt, "heat": heat, "cop": cop_c}
 
@@ -178,3 +190,79 @@ class EnergyIntegrator:
             if 0 < dt <= self.max_gap:
                 self.kwh += (w0 + watts) / 2 * dt / 3_600_000  # trapezoid
         self._last = (now, watts)
+
+
+DAILY_MIN_ELEC_KWH = 0.05  # below this a day's COP is not meaningful
+
+
+def energy_cop(heat_kwh: float, elec_kwh: float) -> float | None:
+    """COP over a period: heat kWh / electricity kWh."""
+    return None if elec_kwh < DAILY_MIN_ELEC_KWH else round(heat_kwh / elec_kwh, 2)
+
+
+class DailyEnergy:
+    """Heat and electricity per local day, for an energy-based daily COP.
+
+    A day's COP is its heat kWh divided by its electricity kWh, so defrosts
+    (negative heat), starts and standby all count. An average of the instant
+    COP doesn't: it skips every moment the instant COP is unknown and weighs
+    a low-power minute as much as a full-power one.
+
+    Heat: increments of the calibrated heat counter. Electricity: increments
+    of the pump's own counter (`power_use`), which steps back after a restart
+    of the heat pump (-0.83 and -1.74 kWh seen); such a step counts as zero.
+    Increments across a data gap longer than `max_gap` count for neither, as
+    the heat counter can't integrate over the gap either.
+    """
+
+    def __init__(self, max_gap: float = 300.0) -> None:
+        self.max_gap = max_gap
+        self.day: str | None = None
+        self.heat_kwh = 0.0
+        self.elec_kwh = 0.0
+        self.previous: tuple[str, float, float] | None = None  # last finished (day, heat, elec)
+        self._last: tuple[float, float, float] | None = None   # (ts, heat counter, elec counter)
+        # The first day is seen only from the moment tracking started: it is
+        # never reported as finished (its COP would cover part of the day).
+        self.partial = False
+
+    def add(self, day: str, ts: float, heat_total: float,
+            elec_counter: float | None) -> tuple[str, float, float] | None:
+        """Feed one burst. Returns (day, heat kWh, electricity kWh) of a day
+        that just ended, else None."""
+        finished = None
+        if day != self.day:
+            if self.day is not None and not self.partial:
+                finished = (self.day, round(self.heat_kwh, 4), round(self.elec_kwh, 4))
+                self.previous = finished
+            self.partial = self.day is None
+            self.day, self.heat_kwh, self.elec_kwh = day, 0.0, 0.0
+        if elec_counter is None:
+            self._last = None
+            return finished
+        if self._last is not None and 0 < ts - self._last[0] <= self.max_gap:
+            self.heat_kwh += heat_total - self._last[1]
+            self.elec_kwh += max(0.0, elec_counter - self._last[2])
+        self._last = (ts, heat_total, elec_counter)
+        return finished
+
+    def cop(self) -> float | None:
+        return energy_cop(self.heat_kwh, self.elec_kwh)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"day": self.day, "heat_kwh": round(self.heat_kwh, 4), "elec_kwh": round(self.elec_kwh, 4),
+                "previous": list(self.previous) if self.previous else None, "partial": self.partial}
+
+    def load(self, data: Any) -> None:
+        if not isinstance(data, dict) or not isinstance(data.get("day"), str):
+            return
+        try:
+            heat, elec = float(data.get("heat_kwh", 0.0)), float(data.get("elec_kwh", 0.0))
+        except (TypeError, ValueError):
+            return
+        self.day, self.heat_kwh, self.elec_kwh = data["day"], heat, max(0.0, elec)
+        self.partial = data.get("partial") is True
+        prev = data.get("previous")
+        if (isinstance(prev, list) and len(prev) == 3 and isinstance(prev[0], str)
+                and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in prev[1:])):
+            self.previous = (prev[0], float(prev[1]), float(prev[2]))

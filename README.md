@@ -138,18 +138,26 @@ twin sensor named "(reported)" under *Diagnostic*.
 | DHW tank temperature | Domestic hot water tank sensor |
 | Electrical power | Power the heat pump uses now, in W |
 | Heat output | Heat it delivers now, in W (corrected) |
-| COP | Heat output ÷ electrical power (corrected). Only while the compressor runs and delivers heat; *unknown* in standby (below 150 W) and while the compressor speeds up or slows down, when the two readings don't line up |
+| COP | Heat output ÷ electrical power right now (corrected). Only while the compressor runs; *unknown* in standby (below 150 W) and while the compressor speeds up or slows down, when the two readings don't line up. Negative during a defrost, when heat is taken out of the water |
+| COP today | Heat ÷ electricity since midnight, in kWh: the real efficiency of the day, including defrosts, start-ups and standby. Attributes: the day's kWh, and yesterday's COP and kWh. Its daily statistic is exactly each finished day's COP (see below) |
 | Electricity consumed | The heat pump's own lifetime electricity counter, kWh |
-| Heat produced since install (corrected) | Heat delivered, kWh (corrected), counted by this integration from its first start. It doesn't count while Home Assistant is off |
+| Heat produced since install (corrected) | Heat delivered, kWh (corrected), counted by this integration from its first start. A defrost takes heat back out of the water, so it can go down a little then. It doesn't count while Home Assistant is off |
 | Compressor frequency, Compressor run time | Compressor speed (Hz) and total running time |
 | Water flow (raw) | Water flow as reported by the heat pump; the unit isn't known, so it has none. Useful for spotting drops (on the development unit typically 700–1,050 while running) |
 | Voltage | Mains voltage |
 | Quiet mode | off / on / level_2 |
 | Fault code | e.g. `P01`, `none` when there is no fault, *unknown* before the heat pump has reported its fault status |
 
-To compare efficiency over a day or a season, divide the daily change of
-**Heat produced since install (corrected)** by that of **Electricity
-consumed** (for example with Home Assistant's statistics card).
+For efficiency per day, use **COP today**: a statistics graph with period
+*day* and type *mean* shows each finished day's real COP (heat kWh ÷
+electricity kWh). Shortly after midnight the integration rewrites the
+finished day's hourly statistics of this sensor with the day's final COP,
+through the recorder's import API; today's bar is provisional until then.
+Don't average the instant **COP** for this: it is unknown at times
+(standby, start-ups) and weighs a minute at 15 Hz like one at 90 Hz, which
+on the development unit read 6–11 % too high. For a season, divide the
+change of **Heat produced since install (corrected)** by that of
+**Electricity consumed**.
 
 **On/off states**
 
@@ -313,10 +321,13 @@ offset** and **Outlet temperature offset**: kelvin added to each reading,
 offset starts at the automatically measured correction.
 
 **Affected:** Return/Leaving water temperature, Flow/return difference, Heat
-output, COP, Heat produced since install (corrected) and the low-flow check.
-Their "(reported)" twins always show the heat pump's own values. While the
-compressor runs with less than 0.3 K reported difference (e.g. starting or
-defrosting), Heat output and COP are briefly *unknown*.
+output, COP, COP today, Heat produced since install (corrected) and the
+low-flow check. Their "(reported)" twins always show the heat pump's own
+values. The heat pump's own heat figure is its controller flow reading ×
+the difference; where that figure can't be used, the integration applies
+the same formula to the corrected difference: in a defrost (the heat pump
+keeps reporting about +690 W while the water is being cooled, so heat
+output turns negative) and when the reported difference is below 0.3 K.
 
 **History.** Home Assistant's long-term statistics (the hourly data used by
 history graphs for older periods, and statistics cards) can be recalculated
@@ -325,8 +336,8 @@ with the current calibration: go to **Developer tools → Actions**, run
 imported. It recalculates from the raw archive (see below), so it needs
 **Save raw data** switched on and only covers the days the archive keeps
 (30 by default). It replaces the hourly statistics of the temperatures,
-flow/return difference, heat output, COP (and their "(reported)" twins) and
-the corrected heat counter; detailed recent history (the last 10 days, by
+flow/return difference, heat output, COP (and their "(reported)" twins),
+the daily COP and the corrected heat counter; detailed recent history (the last 10 days, by
 Home Assistant's default) isn't changed. You can run it again any time, for
 example after changing the calibration. When an update changes how history
 is calculated, a **repair** (Settings → Repairs) offers to run it; nothing

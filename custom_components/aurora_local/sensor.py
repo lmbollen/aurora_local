@@ -49,7 +49,7 @@ from .coordinator import AdlarCoordinator
 from .entity import AdlarEntity
 from .pyauroralocal import STATUSES
 from .pyauroralocal import fields as M
-from .pyauroralocal.calibration import CAL_MIN_SAMPLES
+from .pyauroralocal.calibration import CAL_MIN_SAMPLES, energy_cop
 from .pyauroralocal.state import to_signed16
 
 _LOGGER = logging.getLogger(__name__)
@@ -206,10 +206,27 @@ SENSORS: tuple[AdlarSensorDescription, ...] = (
         value_fn=M.cop,
     ),
     AdlarSensorDescription(
+        key="cop_today",
+        name="COP today",
+        icon="mdi:calendar-today",
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=2,
+        coord_fn=lambda c: c.daily.cop(),
+        attrs_fn=lambda c: {
+            "day": c.daily.day,
+            "heat_kwh": round(c.daily.heat_kwh, 2),
+            "electricity_kwh": round(c.daily.elec_kwh, 2),
+            "yesterday": energy_cop(c.daily.previous[1], c.daily.previous[2]) if c.daily.previous else None,
+            "yesterday_heat_kwh": round(c.daily.previous[1], 2) if c.daily.previous else None,
+            "yesterday_electricity_kwh": round(c.daily.previous[2], 2) if c.daily.previous else None,
+        },
+    ),
+    AdlarSensorDescription(
         key="heat_produced_calibrated",
         name="Heat produced since install (corrected)",
         device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        # TOTAL, not TOTAL_INCREASING: a defrost takes heat back out of the water.
+        state_class=SensorStateClass.TOTAL,
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         suggested_display_precision=2,
         coord_fn=lambda c: round(c.heat_energy.kwh, 3),

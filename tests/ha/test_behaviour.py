@@ -201,3 +201,46 @@ async def test_diagnostics_are_redacted(hass: HomeAssistant) -> None:
     text = str(diag)
     for secret in (DEVICE_KEY, "PRODKEY1", "192.0.2.99", "192.0.2.5", "192.0.2.10"):
         assert secret not in text, secret
+
+
+async def test_defrost_heat_and_cop_today(hass: HomeAssistant) -> None:
+    entry = await _setup(hass)
+    c = entry.runtime_data
+    # Defrost: four-way valve at 0 at 55 Hz, water cooled by 4.5 K; the pump reports +690 W
+    _feed(entry, {"temp_in": 300, "temp_out": 255, "energy2": 690, "instantpower": 700, "param1": 55,
+                  "param10": 0, "param38": 10, "power_use": 10000})
+    await hass.async_block_till_done()
+    assert float(_state(hass, "heat_output").state) == -5985
+    assert float(_state(hass, "cop").state) == -8.55
+    assert _state(hass, "heat_produced_calibrated").attributes["state_class"] == "total"
+    c.daily.heat_kwh, c.daily.elec_kwh = 30.0, 10.0
+    c.daily.previous = ("2026-11-24", 28.0, 10.0)
+    c.async_update_listeners()
+    await hass.async_block_till_done()
+    today = _state(hass, "cop_today")
+    assert float(today.state) == 3.0
+    assert today.attributes["yesterday"] == 2.8 and today.attributes["electricity_kwh"] == 10.0
+    assert today.attributes["state_class"] == "measurement"
+
+
+
+async def test_finished_day_cop_written_to_statistics(hass: HomeAssistant) -> None:
+    """Every hour of the finished local day gets the day's COP (official import API)."""
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.aurora_local import history_import
+
+    await hass.config.async_set_time_zone("Europe/Amsterdam")
+    entry = await _setup(hass)
+    with (
+        patch.object(history_import, "get_instance") as instance,
+        patch.object(history_import, "async_import_statistics") as imp,
+    ):
+        instance.return_value.async_add_executor_job = AsyncMock(return_value={})
+        assert await history_import.async_write_daily_cop(entry.runtime_data, "2026-10-25", 3.25) == 25  # DST day
+        assert await history_import.async_write_daily_cop(entry.runtime_data, "2026-11-24", 3.25) == 24
+    meta, rows = imp.call_args.args[1], imp.call_args.args[2]
+    assert meta["statistic_id"] == _state(hass, "cop_today").entity_id and meta["source"] == "recorder"
+    assert dt_util.as_local(rows[0]["start"]).isoformat() == "2026-11-24T00:00:00+01:00"
+    assert dt_util.as_local(rows[-1]["start"]).isoformat() == "2026-11-24T23:00:00+01:00"
+    assert all(r["mean"] == r["min"] == r["max"] == 3.25 for r in rows)

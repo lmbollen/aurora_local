@@ -94,6 +94,49 @@ assert lib.fields.cop_from(1500, 240, 40) == 6.25      # exactly 6 W/Hz: shown
 assert lib.fields.cop_from(1500, 239, 40) is None      # just below 6 W/Hz
 ok("COP boundaries: 150 W and 6 W/Hz are inclusive")
 
+# --- defrost heat, energy-based daily COP ---------------------------------------
+cal = lib.calibration.Calibration()  # no samples yet: offset 0
+defrost = {"param1": 55, "param10": 0, "energy2": 690, "instantpower": 700, "param38": 10,
+           "instantrate": 110, "temp_in": 300, "temp_out": 255}
+c = cal.corrected(defrost, 0)
+assert c["heat"] == -5985, c          # 133 W per (0.1 m³/h · K) × 10 × -4.5 K, not the reported +690 W
+assert c["cop"] == -8.55, c           # shown, and negative
+lowdt = {"param1": 15, "param10": 1, "energy2": 300, "instantpower": 250, "param38": 8, "temp_in": 300, "temp_out": 302}
+assert cal.corrected(lowdt, 0)["heat"] == 213   # ΔT too small to scale: the pump's own formula
+assert cal.corrected({**lowdt, "temp_out": 299}, 0)["heat"] == 0  # never negative outside defrost
+assert lib.fields.heat_from_flow({"param38": 65535}, 1.0) is None
+ok("defrost counts as negative heat (controller flow × ΔT), small ΔT no longer drops heat")
+
+dly = lib.calibration.DailyEnergy()
+dly.add("d0", -1000, 9.0, 99.0)                 # tracking starts mid-day: d0 is partial
+assert dly.add("d1", 0, 10.0, 100.0) is None and dly.previous is None, "a partial first day is never reported"
+dly.add("d1", 90, 10.5, 100.1)
+dly.add("d1", 180, 10.3, 100.2)                 # defrost: heat counter goes back
+dly.add("d1", 270, 10.4, 99.4)                  # restart: electricity counter steps back
+dly.add("d1", 5000, 20.0, 110.0)                # after a 79-minute gap: counts for neither
+dly.add("d1", 5090, 20.6, 110.2)
+assert round(dly.heat_kwh, 2) == 1.0 and round(dly.elec_kwh, 2) == 0.4, (dly.heat_kwh, dly.elec_kwh)
+assert dly.cop() == 2.5
+done = dly.add("d2", 5180, 20.7, 110.3)
+assert dly.previous == done
+assert done[0] == "d1" and round(done[1], 2) == 1.0 and round(done[2], 2) == 0.4, done  # straddling step counts for d2
+assert round(dly.heat_kwh, 2) == 0.1 and round(dly.elec_kwh, 2) == 0.1
+d2 = lib.calibration.DailyEnergy()
+d2.load(dly.to_dict())
+assert d2.day == "d2" and d2.previous == dly.previous and round(d2.elec_kwh, 2) == 0.1
+assert lib.calibration.energy_cop(1.0, 0.01) is None
+ok("daily COP = heat kWh / electricity kWh; defrost counts, counter rollback and gaps don't")
+
+hh = lib.history.HourlyHistory(0, 0, before=3 * 86400, day_of=lambda ts: f"day{int(ts // 86400)}")
+heat_on = {"param1": 40, "param10": 1, "instantpower": 1000, "energy2": 3000, "param38": 8, "temp_in": 300, "temp_out": 330}
+for i, ts in enumerate(range(43200, 3 * 86400, 90)):  # day0 from noon (partial), day1 complete, day2 complete
+    hh.add({**heat_on, "power_use": 10000 + i * 2.5}, ts)  # 1000 W = 2.5 × 0.01 kWh per 90 s
+rows = hh.rows()["cop_today"]
+starts = [r["start"] for r in rows]
+assert min(starts) == 86400 and len(rows) == 24, (len(rows), min(starts))  # day0 partial, day2 not finished
+assert all(r["mean"] == r["min"] == r["max"] == 3.0 for r in rows), rows[:2]
+ok("history rebuild writes each finished day's energy-based COP into all its hours")
+
 # --- client lifecycle / backoff ---------------------------------------------
 c = lib.client.AdlarClient("x", 1, lambda *a: None)
 assert c.backoff_delay(1025) == 3600 and c.backoff_delay(10**6) == 3600

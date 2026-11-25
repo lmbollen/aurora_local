@@ -94,10 +94,10 @@ the integral of the instantaneous values.
 | `temp_curve1`, `temp_curve11` | Constant 24.0 °C | 0.1 °C | Unknown | Probably curve minimum |
 | `instantpower` | **Electrical input power** | W | Confirmed | Integral 17.3 kWh ≈ `power_use` Δ 17.6 kWh |
 | `instantpower` = `32771` | Sentinel / invalid (`0x8003`) | n/a | Likely | Appeared only during restart attempts in a fault |
-| `energy2` | **Heat output now** | W | Confirmed | 0 when compressor off; integral 87.0 kWh ≈ `energy_use2` Δ 87.1 kWh. **Not a counter.** |
-| `instantrate` | **Water flow** | ~L/h (×1.28?) | Likely | `energy2 ≈ instantrate × ΔT × 1.163 × 1.28`, r = 0.95 (first data). Reads far below the controller's flow (`param38`) during the radiator boost and in defrost, see §5 |
-| `energy_use2` | **Lifetime heat produced** | 0.01 kWh | Confirmed | 771 kWh at 2026-11-06 |
-| `power_use` | **Lifetime electricity used** | 0.01 kWh | Confirmed | 152 kWh at 2026-11-06 |
+| `energy2` | **Heat output now** | W | Confirmed | 0 when compressor off; integral 87.0 kWh ≈ `energy_use2` Δ 87.1 kWh. **Not a counter.** Computed from the controller flow: `energy2 ≈ 133 × param38 × raw ΔT` (r 0.991 over all running data; with `instantrate` r 0.55). In defrost it stays at a fixed ~690 W while the water is cooled by 3–6 K |
+| `instantrate` | **Water flow**, raw | ~L/h? | Uncertain | Not the flow the heat figure uses. Didn't respond when the bypass valve was opened (see §5), falls as the water heats up at constant ΔT and heat, and reads ≈ 110 in defrost with the pump at 99 % |
+| `energy_use2` | **Lifetime heat produced** | 0.01 kWh | Confirmed | 771 kWh at 2026-11-06. Counts defrost as positive heat (from `energy2`) |
+| `power_use` | **Lifetime electricity used** | 0.01 kWh | Confirmed | 152 kWh at 2026-11-06. Stepped back twice after a restart of the heat pump (−1.74 kWh 2026-11-06 11:04, −0.83 kWh 2026-11-23 22:17, both with `energy_use2` too and a ~4-minute data gap) |
 | `power_use12` | Lifetime electricity, subset | 0.01 kWh | Likely | Δ 15.0 kWh vs total 17.6, maybe compressor only |
 | `runtime2` | **Compressor run time** | minutes | Confirmed | Δ 1,511 min vs 1,514 running minutes measured |
 | `*1` / `*3` variants of `energy_use`, `power_use`, `runtime`, `energy` | Always 0 | n/a | Likely | Other modes (cooling / hot water?) never used here |
@@ -110,7 +110,10 @@ the integral of the instantaneous values.
 Derived values worth exposing:
 
 - **COP** = `energy2 / instantpower` while running. Measured 4.4 at 0–2 °C
-  outdoor, 5.7–6.2 above 2 °C, flow 30–32 °C.
+  outdoor, 5.7–6.2 above 2 °C, flow 30–32 °C (uncorrected sensors).
+- **Daily COP** = heat kWh / electricity kWh over the day, defrosts
+  included. An average of the instant COP reads 6–11 % higher on this unit
+  (it skips standby and start-ups and weighs low-speed minutes equally).
 - **ΔT** = `temp_out − temp_in`. 4–5 K is normal here; 15 K preceded P01.
 - **Seasonal COP** = Δ`energy_use2` / Δ`power_use`. 4.95 over 34 h.
 
@@ -164,7 +167,7 @@ are the condensing and evaporating temperatures from `param60` and `param58`
 | `param25` | **Outdoor fan speed**, rpm | Likely | 0 off and in defrost, 400 ± 3, 450 / 500 at higher speed, ~820 briefly after defrost |
 | `param32` | **Circulation pump speed**, % | Likely | 35 standby (no flow), 70 normal, 95–99 when `instantrate` is low |
 | `param37` | Follows the pump command | Unknown | r 0.87 with `param32`: 14–15 / 16–17 / 19–22 at 35 / 70 / 99 % |
-| `param38` | **Actual water flow**, 0.1 m³/h (Modbus 64) | Likely | r 0.80 with `instantrate`; 0 or 4 standby, 7–8 (700–800 L/h) normal, 9–10 when the pump starts |
+| `param38` | **Actual water flow**, 0.1 m³/h (Modbus 64 "Actual Water Flow of DC Pump") | Likely | A measurement, not a setpoint: stepped 8 → 10 the moment the bypass valve was opened further (pump 99 % and compressor unchanged, ΔT fell 7.4 → 6.6 K at the same heat), and changes in 22 % of consecutive bursts at constant pump and compressor speed. The heat figure uses a finer internal value (1,040–1,245 L/h at "10"). 0 or 4 standby, 7–8 normal, ~10 in defrost |
 | `param39` | Tied to `param38` | Unknown | `param38` + 5 or + 6 (r 0.96) |
 
 ### Event flags
@@ -225,8 +228,9 @@ with water temperature (0.8 K below 20 °C, 0.95 K at 28–35 °C, ~1.2 K above
 and the compressor off (4), so that direct check isn't possible.
 
 The two flow readings don't follow one scale: at `param38` = 0.5 m³/h the
-raw `instantrate` reads ~400, at 0.8 m³/h ~965. The controller's figure
-varies less than the raw one, in both directions.
+raw `instantrate` reads ~400, at 0.8 m³/h ~965. The heat pump's own heat
+figure follows `param38` (see `energy2` in §4), so this integration counts
+defrost heat with `param38` too.
 
 ### Cross-check with the Aurora III Modbus register map
 
@@ -287,9 +291,19 @@ flow stoppages also happen (the P01 faults of 6 Nov had ΔT 15 K).
 
 The second flow reading (`param38`, Modbus "actual water flow") also drops
 at those times, but less: median 5 (≈ 500 L/h) when `instantrate` reads
-below 450, against 7–8 normally. It probably comes from the same flow
-sensor, so it doesn't settle the question either; it does suggest the flow
-really falls by about a third, not by the 60 % that `instantrate` shows.
+below 300, against 7–8 normally. The heat figure is built on `param38`, and
+the efficiency against Carnot (COP ÷ Carnot COP from the two pressures) is
+0.55 normally but 0.19–0.25 in those bursts at the same compressor speed,
+with either flow reading. So at those times the water-side heat (flow × ΔT)
+is lower than the refrigerant side suggests; which water-side reading is
+off is still open. A separate heat meter would settle it.
+
+**Bypass valve.** On 2026-11-23 at 19:54 the bypass was set from 0.4 to
+0.3 bar with the compressor at 91 Hz and the pump at 99 %. Within one burst
+`param38` went 8 → 10, ΔT 7.4 → 6.6 K and the return temperature started
+rising faster, at unchanged power, pressures and heat: more water through
+the heat pump. `instantrate` went 421 → 442. At pump ≥ 98 % the flow
+implied by the heat figure was 800 / 910 / 1,120 L/h at 0.5 / 0.4 / 0.3 bar.
 
 ## 6. Settings block (since 2026-11-05 07:42)
 
