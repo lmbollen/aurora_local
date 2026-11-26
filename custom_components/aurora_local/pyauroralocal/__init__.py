@@ -31,7 +31,7 @@ from .monitoring import FaultChange, FaultTracker, LowFlowTracker
 from .processor import BurstProcessor
 from .state import AdlarState, to_signed16
 
-__version__ = "0.8.0"
+__version__ = "0.8.7"
 
 __all__ = [
     "CAL_AUTO",

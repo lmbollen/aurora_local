@@ -66,6 +66,49 @@ async def test_burst_updates_corrected_and_reported_sensors(hass: HomeAssistant)
     assert _state(hass, "fault_code").state == "none"
 
 
+async def test_refrigerant_sensors_and_generic_cleanup(hass: HomeAssistant) -> None:
+    # An older version created a generic (disabled) entity for param60
+    registry = er.async_get(hass)
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=DEVICE_KEY, data=DATA, options=OPTIONS, minor_version=2)
+    entry.add_to_hass(hass)
+    old = registry.async_get_or_create("sensor", DOMAIN, f"{DEVICE_KEY}_param60", config_entry=entry)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert registry.async_get(old.entity_id) is None
+    _feed(entry, {**BURST, "param60": 1052, "param58": 341, "param33": 65531, "param21": 344,
+                  "param2": 65, "param25": 400, "param32": 70, "param5": 452, "param6": 20,
+                  "param7": 65533, "param8": 281, "param16": 57, "param38": 8, "param10": 0, "param18": 0})
+    await hass.async_block_till_done()
+    assert float(_state(hass, "discharge_temperature").state) == 45.2
+    assert float(_state(hass, "coil_temperature").state) == -0.3
+    assert float(_state(hass, "compressor_current").state) == 5.7
+    assert float(_state(hass, "suction_temperature").state) == 2.0
+    assert float(_state(hass, "liquid_line_temperature").state) == 28.1
+    # A field that is not covered keeps its (disabled) generic entity
+    _feed(entry, {"param59": 1})
+    await hass.async_block_till_done()
+    assert registry.async_get_entity_id("sensor", DOMAIN, f"{DEVICE_KEY}_param59") is not None
+    flow = _state(hass, "water_flow_controller")
+    assert float(flow.state) == 0.8 and flow.attributes["unit_of_measurement"] == "m³/h"
+    defrost_id = registry.async_get_entity_id("binary_sensor", DOMAIN, f"{DEVICE_KEY}_defrost")
+    oil_id = registry.async_get_entity_id("binary_sensor", DOMAIN, f"{DEVICE_KEY}_oil_return")
+    assert hass.states.get(defrost_id).state == "on"   # 50 Hz with the four-way valve at 0
+    assert hass.states.get(oil_id).state == "off"
+    _feed(entry, {"param18": 1})
+    await hass.async_block_till_done()
+    assert hass.states.get(oil_id).state == "on"
+    high = _state(hass, "high_pressure")
+    assert float(high.state) == 10.52 and high.attributes["unit_of_measurement"] == "bar"
+    assert float(_state(hass, "low_pressure").state) == 3.41
+    assert float(_state(hass, "evaporating_temperature").state) == -0.5   # signed 16-bit
+    assert float(_state(hass, "dc_bus_voltage").state) == 344
+    assert float(_state(hass, "expansion_valve").state) == 65
+    assert float(_state(hass, "outdoor_fan_speed").state) == 400
+    assert float(_state(hass, "circulation_pump_speed").state) == 70
+    # No generic entity is created for a field that has a named sensor
+    assert registry.async_get_entity_id("sensor", DOMAIN, f"{DEVICE_KEY}_param60") is None
+
+
 async def test_fault_code_unknown_before_fault_data(hass: HomeAssistant) -> None:
     entry = await _setup(hass)
     _feed(entry, {k: v for k, v in BURST.items() if k != "device_fault7"})
@@ -158,3 +201,61 @@ async def test_diagnostics_are_redacted(hass: HomeAssistant) -> None:
     text = str(diag)
     for secret in (DEVICE_KEY, "PRODKEY1", "192.0.2.99", "192.0.2.5", "192.0.2.10"):
         assert secret not in text, secret
+
+
+async def test_defrost_heat_and_cop_today(hass: HomeAssistant) -> None:
+    entry = await _setup(hass)
+    c = entry.runtime_data
+    # Defrost: four-way valve at 0 at 55 Hz, water cooled by 4.5 K; the pump reports +690 W
+    _feed(entry, {"temp_in": 300, "temp_out": 255, "energy2": 690, "instantpower": 700, "param1": 55,
+                  "param10": 0, "param38": 10, "power_use": 10000})
+    await hass.async_block_till_done()
+    assert float(_state(hass, "heat_output").state) == -5985
+    assert float(_state(hass, "cop").state) == -8.55
+    assert _state(hass, "heat_produced_calibrated").attributes["state_class"] == "total"
+    c.daily.heat_kwh, c.daily.elec_kwh = 30.0, 10.0
+    c.daily.previous = ("2026-11-24", 28.0, 10.0)
+    c.async_update_listeners()
+    await hass.async_block_till_done()
+    today = _state(hass, "cop_today")
+    assert float(today.state) == 3.0
+    assert today.attributes["yesterday"] == 2.8 and today.attributes["electricity_kwh"] == 10.0
+    assert today.attributes["state_class"] == "measurement"
+
+
+
+async def test_finished_day_cop_written_to_statistics(hass: HomeAssistant) -> None:
+    """Every hour of the finished local day gets the day's COP (official import API)."""
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.aurora_local import history_import
+
+    await hass.config.async_set_time_zone("Europe/Amsterdam")
+    entry = await _setup(hass)
+    with (
+        patch.object(history_import, "get_instance") as instance,
+        patch.object(history_import, "async_import_statistics") as imp,
+    ):
+        instance.return_value.async_add_executor_job = AsyncMock(return_value={})
+        assert await history_import.async_write_daily_cop(entry.runtime_data, "2026-10-25", 3.25) == 25  # DST day
+        assert await history_import.async_write_daily_cop(entry.runtime_data, "2026-11-24", 3.25) == 24
+    meta, rows = imp.call_args.args[1], imp.call_args.args[2]
+    assert meta["statistic_id"] == _state(hass, "cop_today").entity_id and meta["source"] == "recorder"
+    assert dt_util.as_local(rows[0]["start"]).isoformat() == "2026-11-24T00:00:00+01:00"
+    assert dt_util.as_local(rows[-1]["start"]).isoformat() == "2026-11-24T23:00:00+01:00"
+    assert all(r["mean"] == r["min"] == r["max"] == 3.25 for r in rows)
+
+
+async def test_instantrate_is_a_cop_and_old_flow_entity_is_removed(hass: HomeAssistant) -> None:
+    registry = er.async_get(hass)
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=DEVICE_KEY, data=DATA, options=OPTIONS, minor_version=2)
+    entry.add_to_hass(hass)
+    old = registry.async_get_or_create("sensor", DOMAIN, f"{DEVICE_KEY}_water_flow", config_entry=entry)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert registry.async_get(old.entity_id) is None
+    _feed(entry, {**BURST, "instantrate": 412, "param38": 8, "param10": 1})
+    await hass.async_block_till_done()
+    assert float(_state(hass, "cop_compressor_reported").state) == 4.12
+    flow = _state(hass, "water_flow_controller")
+    assert float(flow.state) == 0.8 and registry.async_get(flow.entity_id).entity_category is None

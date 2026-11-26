@@ -7,6 +7,9 @@ import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+AMS = ZoneInfo("Europe/Amsterdam")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _lib import load  # noqa: E402
@@ -15,7 +18,8 @@ lib = load(sys.argv[1])
 
 before = int(time.time() // 3600 * 3600)
 t = time.time()
-rows, total = lib.history.build(lib.archive.RawLogger(Path(sys.argv[2]), 30), 0.0, -0.86, before)
+day_of = lambda ts: datetime.fromtimestamp(ts, AMS).date().isoformat()  # noqa: E731
+rows, total = lib.history.build(lib.archive.RawLogger(Path(sys.argv[2]), 30), 0.0, -0.86, before, day_of)
 print(f"build took {time.time() - t:.1f}s, calibrated heat total {total:.1f} kWh")
 for key in sorted(rows):
     r = rows[key]
@@ -25,9 +29,17 @@ for key in sorted(rows):
 # all hours complete and on the hour
 for key, r in rows.items():
     assert all(x["start"] % 3600 == 0 and x["start"] + 3600 <= before for x in r), key
-# energy monotonic
+# energy: ends at the total; an hour only goes down a little (a defrost takes heat back)
 e = [x["sum"] for x in rows[lib.history.ENERGY_KEY]]
-assert all(b >= a for a, b in zip(e, e[1:])) and abs(e[-1] - total) < 5, (e[-1], total)
+drops = [a - b for a, b in zip(e, e[1:]) if b < a]
+assert abs(e[-1] - total) < 5 and max(drops, default=0) < 1.5, (e[-1], total, max(drops, default=0))
+print(f"heat counter: {len(drops)} hours with a net defrost loss, largest {max(drops, default=0):.2f} kWh")
+# daily COP: every hour of a day carries the same value
+daily: dict[str, set] = {}
+for x in rows[lib.history.DAILY_COP_KEY]:
+    daily.setdefault(day_of(x["start"]), set()).add(x["mean"])
+assert daily and all(len(v) == 1 for v in daily.values()), daily
+print("daily COP:", {d: next(iter(v)) for d, v in sorted(daily.items())})
 # corrected vs reported relationship in a running hour
 by = {k: {x["start"]: x for x in v} for k, v in rows.items()}
 hour = max(h for h in by["heat_output"] if by["heat_output"][h]["mean"] > 2000)

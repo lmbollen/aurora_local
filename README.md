@@ -138,26 +138,36 @@ twin sensor named "(reported)" under *Diagnostic*.
 | DHW tank temperature | Domestic hot water tank sensor |
 | Electrical power | Power the heat pump uses now, in W |
 | Heat output | Heat it delivers now, in W (corrected) |
-| COP | Heat output ÷ electrical power (corrected). Only while the compressor runs with at least 300 W and delivers heat; otherwise *unknown*, because the two readings don't line up when it starts or stops |
+| COP | Heat output ÷ electrical power right now (corrected). Only while the compressor runs; *unknown* in standby (below 150 W) and while the compressor speeds up or slows down, when the two readings don't line up. Negative during a defrost, when heat is taken out of the water |
+| COP today | Heat ÷ electricity since midnight, in kWh: the real efficiency of the day, including defrosts, start-ups and standby. Attributes: the day's kWh, and yesterday's COP and kWh. Its daily statistic is exactly each finished day's COP (see below) |
 | Electricity consumed | The heat pump's own lifetime electricity counter, kWh |
-| Heat produced since install (corrected) | Heat delivered, kWh (corrected), counted by this integration from its first start. It doesn't count while Home Assistant is off |
+| Heat produced since install (corrected) | Heat delivered, kWh (corrected), counted by this integration from its first start. A defrost takes heat back out of the water, so it can go down a little then. It doesn't count while Home Assistant is off |
 | Compressor frequency, Compressor run time | Compressor speed (Hz) and total running time |
-| Water flow (raw) | Water flow as reported by the heat pump; the unit isn't known, so it has none. Useful for spotting drops (on the development unit typically 700–1,050 while running) |
+| Water flow | Water flow measured by the heat pump's controller, m³/h in 0.1 steps; it reads 0 below about 0.4 m³/h (on the development unit 0.7–1.1 while running, 0.4–0.5 when the floor's mixing valves throttle during a hot boost) |
 | Voltage | Mains voltage |
 | Quiet mode | off / on / level_2 |
 | Fault code | e.g. `P01`, `none` when there is no fault, *unknown* before the heat pump has reported its fault status |
 
-To compare efficiency over a day or a season, divide the daily change of
-**Heat produced since install (corrected)** by that of **Electricity
-consumed** (for example with Home Assistant's statistics card).
+For efficiency per day, use **COP today**: a statistics graph with period
+*day* and type *mean* shows each finished day's real COP (heat kWh ÷
+electricity kWh). Shortly after midnight the integration rewrites the
+finished day's hourly statistics of this sensor with the day's final COP,
+through the recorder's import API; today's bar is provisional until then.
+Don't average the instant **COP** for this: it is unknown at times
+(standby, start-ups) and weighs a minute at 15 Hz like one at 90 Hz, which
+on the development unit read 6–11 % too high. For a season, divide the
+change of **Heat produced since install (corrected)** by that of
+**Electricity consumed**.
 
 **On/off states**
 
 | Binary sensor | Meaning |
 |---|---|
 | Fault | A fault is active (codes in its attributes) |
-| Low flow warning | Water flow too low for 5 minutes while the compressor runs (see [Alerts](#alerts)) |
+| Low flow warning | Water flow too low for 5 minutes while the compressor runs, not counting defrosts (see [Alerts](#alerts)) |
 | Compressor running | The compressor is on |
+| Defrost | The outdoor unit is defrosting (a few minutes, every 1–2 hours around 0 °C outside); the water briefly cools then |
+| Oil return | The compressor's periodic oil-return cycle, about every 4 hours of running (Diagnostic) |
 | Zone 1, Zone 2 | Heating circuit switched on |
 | AHS (forced heating) | Auxiliary heat source (backup heater) allowed |
 | Holiday mode | Holiday mode is on |
@@ -175,7 +185,21 @@ are used in manual mode; changing one switches calibration to manual.
 - **Installer parameters**: the number of installer (E2) parameters the
   heat pump reported; the values are in its attributes (P1, P2, …) for
   reference, but their meanings aren't documented;
-- raw mode values and curve temperatures whose meaning isn't confirmed.
+- raw mode values and curve temperatures whose meaning isn't confirmed;
+- the refrigerant circuit and drives: **Refrigerant high pressure** and
+  **Refrigerant low pressure** (bar, gauge; at standstill both settle at the
+  same value), **Evaporating temperature**, **DC bus voltage**, **Expansion
+  valve opening**, **Outdoor fan speed** and **Circulation pump speed** (%).
+  Also **Compressor discharge / suction temperature**, **Outdoor coil
+  temperature**, **Liquid line temperature**, **Compressor current** and
+  **COP compressor only (reported)**: the heat pump's own COP without fan
+  and circulation pump (its field `instantrate` / 100; earlier versions
+  showed this as *Water flow (raw)*, which it isn't).
+  The vendor app doesn't show these. Their meanings were worked out from the
+  data and match the names in the Aurora III Modbus register map (see the
+  protocol notes), so treat them as very likely rather than confirmed. The
+  circulation pump reads 35 % at standstill, which is a standby value, not a
+  speed.
 
 *Electricity consumed (subset)* is disabled by default. The heat pump also
 sends many fields whose meaning isn't known yet. They're created
@@ -197,9 +221,11 @@ Devices & services → Aurora Local → Configure**. You then get one when:
   codes, is updated when one clears and disappears when all have cleared.
   A fault that started while Home Assistant was off is reported too, and a
   fault that's still active after a restart is shown again.
-- **Low flow warning** turns on: the flow reading below 300 (or more than
-  10 K between leaving and return water) for 5 minutes while the compressor
-  runs. It turns off again after 5 minutes of normal flow, and its
+- **Low flow warning** turns on: **Water flow** at 0 (below about
+  0.4 m³/h) or more than 10 K between leaving and return water, for 5
+  minutes while the compressor runs. Defrosts don't count: the timers pause
+  until the defrost ends. It turns off again after 5
+  minutes of normal flow, and its
   notification disappears by itself. On the development unit this came about
   15 minutes before a `P01` fault, so it's an early prompt to check the water
   filter, system pressure and valves.
@@ -279,8 +305,9 @@ difference of 3–5 K, the heat pump reported 20–40 % more heat (and COP) than
 it delivered. Your unit may differ.
 
 **Automatic (default).** When the compressor has been off for at least 20
-minutes, no water is flowing and power is below 100 W, both sensors sit in the
-same still water and should agree. The integration then measures their
+minutes and power is below 100 W, no heat is added, so both sensors see the
+same water and should agree (whether or not the pump circulates at standby
+speed: on the development unit that made 0.03 K difference). The integration then measures their
 difference once per data update (about every 1½ minutes), averages the
 measurements of the last 7 days (ignoring outliers), and corrects the
 leaving-water reading. It needs at least 30 measurements before it applies a
@@ -296,10 +323,13 @@ offset** and **Outlet temperature offset**: kelvin added to each reading,
 offset starts at the automatically measured correction.
 
 **Affected:** Return/Leaving water temperature, Flow/return difference, Heat
-output, COP, Heat produced since install (corrected) and the low-flow check.
-Their "(reported)" twins always show the heat pump's own values. While the
-compressor runs with less than 0.3 K reported difference (e.g. starting or
-defrosting), Heat output and COP are briefly *unknown*.
+output, COP, COP today, Heat produced since install (corrected) and the
+low-flow check. Their "(reported)" twins always show the heat pump's own
+values. The heat pump's own heat figure is its controller flow reading ×
+the difference; where that figure can't be used, the integration applies
+the same formula to the corrected difference: in a defrost (the heat pump
+keeps reporting about +690 W while the water is being cooled, so heat
+output turns negative) and when the reported difference is below 0.3 K.
 
 **History.** Home Assistant's long-term statistics (the hourly data used by
 history graphs for older periods, and statistics cards) can be recalculated
@@ -308,8 +338,8 @@ with the current calibration: go to **Developer tools → Actions**, run
 imported. It recalculates from the raw archive (see below), so it needs
 **Save raw data** switched on and only covers the days the archive keeps
 (30 by default). It replaces the hourly statistics of the temperatures,
-flow/return difference, heat output, COP (and their "(reported)" twins) and
-the corrected heat counter; detailed recent history (the last 10 days, by
+flow/return difference, heat output, COP (and their "(reported)" twins),
+the daily COP and the corrected heat counter; detailed recent history (the last 10 days, by
 Home Assistant's default) isn't changed. You can run it again any time, for
 example after changing the calibration. When an update changes how history
 is calculated, a **repair** (Settings → Repairs) offers to run it; nothing
@@ -342,8 +372,8 @@ retention period), that counter's history is left as it is.
 ## Limitations
 
 - Read-only: no control of the heat pump.
-- Developed and tested on one heat pump. Some field meanings (water flow
-  unit, most fault codes, many `paramN` fields) are still unknown.
+- Developed and tested on one heat pump. Some field meanings (most fault
+  codes, many `paramN` fields) are still unknown.
 - The automatic calibration needs the heat pump to stand still for 20 minutes
   or more now and then. If it never does, use manual calibration.
 
@@ -353,7 +383,7 @@ retention period), that counter's history is left as it is.
 |---|---|
 | Setup fails | See the table under [Setup](#setup). |
 | Entities *unavailable* | No data for 5 minutes. Check **Connection** and its *last error*; press **Reconnect now**. |
-| COP *unknown* | Normal while the compressor is off, starting or stopping (below 300 W), or delivers no heat. |
+| COP *unknown* | Normal while the compressor is off or in standby (below 150 W), while it speeds up or slows down, or when it delivers no heat. |
 | Heat produced since install is far below Heat produced, lifetime (reported) | Expected: one counts since this integration started and is corrected, the other since the heat pump was installed. |
 | Heat output or COP look wrong | Check **Temperature calibration offset**. Switch to manual if needed, then run the rebuild action (see [History](#temperature-calibration)). |
 | Quiet mode / zones / AHS / holiday *unknown* | They appear after the heat pump next reports them (see [First steps](#first-steps)). |

@@ -25,7 +25,9 @@ SIGNAL_NEW_TABLES = f"{DOMAIN}_new_tables_{{}}"
 # Bump to offer a history rebuild (repair issue) after an upgrade that changes
 # how history is calculated.
 # 3: v0.7.0 anchors the imported heat counter at the recorder's latest hour.
-HISTORY_VERSION = 3
+# 4: v0.8.5 shows COP at minimum compressor speed (150 W / 6 W per Hz rule).
+# 5: v0.8.6 counts defrost as negative heat and adds the energy-based daily COP.
+HISTORY_VERSION = 5
 HISTORY_RETRY_SECONDS = 900  # heat counter import waits for recorder statistics
 HISTORY_MAX_RETRIES = 8
 ISSUE_REBUILD = "rebuild_history"

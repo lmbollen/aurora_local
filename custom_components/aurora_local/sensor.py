@@ -1,9 +1,11 @@
 """Sensors for the Adlar Castra heat pump.
 
-Known fields use the meanings confirmed in docs/adlar-castra-protocol.md
-(names as in the Thermomax app, units checked against counters). Every other
-field the heat pump reports gets a generic entity automatically, except known
-duplicates. Parameter tables (the E2 installer table) get one entity each.
+Known fields use the meanings in docs/adlar-castra-protocol.md: confirmed
+against the Thermomax app and counters for the main values, and identified
+from the data and matched to the Aurora III Modbus register names for the
+refrigerant circuit (diagnostic, "likely"). Every other field the heat pump
+reports gets a generic entity automatically, except known duplicates.
+Parameter tables (the E2 installer table) get one entity each.
 """
 
 from __future__ import annotations
@@ -22,15 +24,21 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import (
+    PERCENTAGE,
+    REVOLUTIONS_PER_MINUTE,
     EntityCategory,
+    UnitOfElectricCurrent,
     UnitOfElectricPotential,
     UnitOfEnergy,
     UnitOfFrequency,
     UnitOfPower,
+    UnitOfPressure,
     UnitOfTemperature,
     UnitOfTime,
+    UnitOfVolumeFlowRate,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
@@ -41,7 +49,7 @@ from .coordinator import AdlarCoordinator
 from .entity import AdlarEntity
 from .pyauroralocal import STATUSES
 from .pyauroralocal import fields as M
-from .pyauroralocal.calibration import CAL_MIN_SAMPLES
+from .pyauroralocal.calibration import CAL_MIN_SAMPLES, energy_cop
 from .pyauroralocal.state import to_signed16
 
 _LOGGER = logging.getLogger(__name__)
@@ -198,10 +206,27 @@ SENSORS: tuple[AdlarSensorDescription, ...] = (
         value_fn=M.cop,
     ),
     AdlarSensorDescription(
+        key="cop_today",
+        name="COP today",
+        icon="mdi:calendar-today",
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=2,
+        coord_fn=lambda c: c.daily.cop(),
+        attrs_fn=lambda c: {
+            "day": c.daily.day,
+            "heat_kwh": round(c.daily.heat_kwh, 2),
+            "electricity_kwh": round(c.daily.elec_kwh, 2),
+            "yesterday": energy_cop(c.daily.previous[1], c.daily.previous[2]) if c.daily.previous else None,
+            "yesterday_heat_kwh": round(c.daily.previous[1], 2) if c.daily.previous else None,
+            "yesterday_electricity_kwh": round(c.daily.previous[2], 2) if c.daily.previous else None,
+        },
+    ),
+    AdlarSensorDescription(
         key="heat_produced_calibrated",
         name="Heat produced since install (corrected)",
         device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        # TOTAL, not TOTAL_INCREASING: a defrost takes heat back out of the water.
+        state_class=SensorStateClass.TOTAL,
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         suggested_display_precision=2,
         coord_fn=lambda c: round(c.heat_energy.kwh, 3),
@@ -248,12 +273,13 @@ SENSORS: tuple[AdlarSensorDescription, ...] = (
         value_fn=M.compressor_hz,
     ),
     AdlarSensorDescription(
-        key="water_flow",
-        name="Water flow (raw)",
+        key="cop_compressor_reported",
+        name="COP compressor only (reported)",
         sources=("instantrate",),
         state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:water-pump",
-        value_fn=lambda v: M.num(v, "instantrate"),
+        suggested_display_precision=2,
+        entity_category=DIAG,
+        value_fn=M.compressor_cop_reported,
     ),
     AdlarSensorDescription(
         key="voltage1",
@@ -284,14 +310,113 @@ SENSORS: tuple[AdlarSensorDescription, ...] = (
     ),
     _raw("mode", "mode", "Mode (raw)"),
     _raw("dmode1", "dmode1", "Mode 1 (raw)"),
+    # Refrigerant circuit and drives: identified from the data (docs §5),
+    # not shown by the vendor app. At standstill both pressures equalise.
+    AdlarSensorDescription(
+        key="high_pressure",
+        name="Refrigerant high pressure",
+        sources=(M.HIGH_PRESSURE,),
+        device_class=SensorDeviceClass.PRESSURE,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfPressure.BAR,
+        suggested_display_precision=1,
+        entity_category=DIAG,
+        value_fn=lambda v: M.pressure_bar(v, M.HIGH_PRESSURE),
+    ),
+    AdlarSensorDescription(
+        key="low_pressure",
+        name="Refrigerant low pressure",
+        sources=(M.LOW_PRESSURE,),
+        device_class=SensorDeviceClass.PRESSURE,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfPressure.BAR,
+        suggested_display_precision=1,
+        entity_category=DIAG,
+        value_fn=lambda v: M.pressure_bar(v, M.LOW_PRESSURE),
+    ),
+    _temp("evaporating_temperature", M.EVAPORATING_TEMP, "Evaporating temperature", entity_category=DIAG),
+    _temp("discharge_temperature", M.DISCHARGE_TEMP, "Compressor discharge temperature", entity_category=DIAG),
+    _temp("suction_temperature", M.SUCTION_TEMP, "Compressor suction temperature", entity_category=DIAG),
+    _temp("coil_temperature", M.COIL_TEMP, "Outdoor coil temperature", entity_category=DIAG),
+    _temp("liquid_line_temperature", M.LIQUID_LINE_TEMP, "Liquid line temperature", entity_category=DIAG),
+    AdlarSensorDescription(
+        key="compressor_current",
+        name="Compressor current",
+        sources=(M.COMPRESSOR_CURRENT,),
+        device_class=SensorDeviceClass.CURRENT,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        suggested_display_precision=1,
+        entity_category=DIAG,
+        value_fn=lambda v: M.tenths(v, M.COMPRESSOR_CURRENT),
+    ),
+    AdlarSensorDescription(
+        key="water_flow_controller",
+        name="Water flow",
+        sources=(M.WATER_FLOW_2,),
+        device_class=SensorDeviceClass.VOLUME_FLOW_RATE,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR,
+        suggested_display_precision=1,
+        value_fn=lambda v: M.tenths(v, M.WATER_FLOW_2),
+    ),
+    AdlarSensorDescription(
+        key="dc_bus_voltage",
+        name="DC bus voltage",
+        sources=(M.DC_BUS_VOLTAGE,),
+        device_class=SensorDeviceClass.VOLTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        entity_category=DIAG,
+        value_fn=lambda v: M.num(v, M.DC_BUS_VOLTAGE),
+    ),
+    AdlarSensorDescription(
+        key="expansion_valve",
+        name="Expansion valve opening",
+        sources=(M.EXPANSION_VALVE,),
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement="steps",
+        icon="mdi:valve",
+        entity_category=DIAG,
+        value_fn=lambda v: M.num(v, M.EXPANSION_VALVE),
+    ),
+    AdlarSensorDescription(
+        key="outdoor_fan_speed",
+        name="Outdoor fan speed",
+        sources=(M.OUTDOOR_FAN,),
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=REVOLUTIONS_PER_MINUTE,
+        icon="mdi:fan",
+        entity_category=DIAG,
+        value_fn=lambda v: M.num(v, M.OUTDOOR_FAN),
+    ),
+    AdlarSensorDescription(
+        key="circulation_pump_speed",
+        name="Circulation pump speed",
+        sources=(M.CIRCULATION_PUMP,),
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=PERCENTAGE,
+        icon="mdi:pump",
+        entity_category=DIAG,
+        value_fn=lambda v: M.num(v, M.CIRCULATION_PUMP),
+    ),
 )
 
 # Raw fields already covered by a sensor above, by a binary sensor, or that
-# duplicate another field (docs §5). No generic entity for these.
+# duplicate another field (docs §5, checked on 19 days of data). No generic
+# entity for these. param9, param53 and param59 are not duplicates and keep
+# their generic entity; param10 (four-way valve) is covered by Defrost.
+# Entities of earlier versions that are gone, with the reason (logged).
+RETIRED = {
+    "water_flow": "'Water flow (raw)' was not a flow; see 'COP compressor only (reported)' "
+                  "and 'Water flow' (the controller's reading)",
+}
+
 COVERED = {s for d in SENSORS for s in d.sources} | {
     "onoff", "onoff1", "hot", "holiday", "fixtime", "bandUser",
     "param3", "param4", "param17", "param29", "param30", "param48", "param50",
-    "param57", "param59", "param9", "param10", "param53",
+    "param57", "param47", "param49",
+    M.FOUR_WAY_VALVE, M.OIL_RETURN,  # Defrost / Oil return binary sensors
 }
 SKIP_KEY_RE = re.compile(r"^device_fault\d+$")
 
@@ -432,6 +557,23 @@ async def async_setup_entry(
             async_add_entities(AdlarTableSensor(coordinator, t) for t in sorted(new))
 
     async_add_entities([*(AdlarSensor(coordinator, d) for d in SENSORS), AdlarConnectionSensor(coordinator)])
+
+    # A field that now has a named sensor no longer gets a generic entity;
+    # remove the generic one an older version created, so it doesn't linger
+    # as "no longer provided".
+    registry = er.async_get(hass)
+    prefix = f"{entry.unique_id}_"
+    named = {d.key for d in SENSORS}
+    for reg in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if reg.domain != "sensor" or not reg.unique_id.startswith(prefix):
+            continue
+        key = reg.unique_id.removeprefix(prefix)
+        if key in COVERED and key.startswith("param") and key not in named:
+            _LOGGER.info("Removing %s: field %s now has a named entity", reg.entity_id, key)
+            registry.async_remove(reg.entity_id)
+        elif key in RETIRED:
+            _LOGGER.info("Removing %s: %s", reg.entity_id, RETIRED[key])
+            registry.async_remove(reg.entity_id)
 
     entry_id = entry.entry_id
     entry.async_on_unload(async_dispatcher_connect(hass, SIGNAL_NEW_KEYS.format(entry_id), add_keys))

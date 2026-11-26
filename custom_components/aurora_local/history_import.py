@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.recorder import get_instance
@@ -57,6 +58,7 @@ UNITS: dict[str, tuple[str | None, type[BaseUnitConverter] | None]] = {
     "heat_output_reported": (UnitOfPower.WATT, PowerConverter),
     "cop": (None, None),
     "cop_reported": (None, None),
+    history.DAILY_COP_KEY: (None, None),
     history.ENERGY_KEY: (UnitOfEnergy.KILO_WATT_HOUR, EnergyConverter),
 }
 
@@ -150,7 +152,36 @@ def _metadata(key: str, entity_id: str, existing: dict[str, Any]) -> StatisticMe
     }
 
 
+async def async_write_daily_cop(coordinator: AdlarCoordinator, day: str, cop: float) -> int:
+    """Give every hour of a finished local day that day's energy-based COP.
+
+    The live state of "COP today" is the COP so far, so the recorder's hourly
+    means for the day drift with it; rewriting them once the day is over
+    makes a daily mean of the statistic exactly the day's COP. Uses the same
+    official import API as the history rebuild. Returns the rows written.
+    """
+    hass = coordinator.hass
+    entity_id = er.async_get(hass).async_get_entity_id(
+        "sensor", DOMAIN, f"{coordinator.config_entry.unique_id}_{history.DAILY_COP_KEY}")
+    if entity_id is None:
+        return 0
+    start = dt_util.start_of_local_day(dt_util.parse_date(day))
+    end = dt_util.start_of_local_day(dt_util.parse_date(day) + timedelta(days=1))
+    existing = await get_instance(hass).async_add_executor_job(
+        lambda: get_metadata(hass, statistic_ids={entity_id})
+    )
+    stats: list[StatisticData] = []
+    hour = start
+    while hour < end:
+        stats.append({"start": hour, "mean": cop, "min": cop, "max": cop})  # type: ignore[typeddict-item]
+        hour = dt_util.as_utc(hour) + timedelta(hours=1)
+    async_import_statistics(hass, _metadata(history.DAILY_COP_KEY, entity_id, existing), stats)
+    return len(stats)
+
+
 async def async_rebuild_history(coordinator: AdlarCoordinator) -> dict[str, Any]:
+    from .coordinator import local_day  # noqa: PLC0415 (circular at import time)
+
     hass = coordinator.hass
     if coordinator.raw_logger is None:
         raise ServiceValidationError(translation_domain=DOMAIN, translation_key="no_archive")
@@ -158,7 +189,7 @@ async def async_rebuild_history(coordinator: AdlarCoordinator) -> dict[str, Any]
     inlet, outlet = coordinator.calibration.offsets(time.time())
     current_hour = int(time.time() // 3600 * 3600)
     rows, total_kwh = await hass.async_add_executor_job(
-        history.build, coordinator.raw_logger, inlet, outlet, current_hour
+        history.build, coordinator.raw_logger, inlet, outlet, current_hour, local_day
     )
 
     registry = er.async_get(hass)

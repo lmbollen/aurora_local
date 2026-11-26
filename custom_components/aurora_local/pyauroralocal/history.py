@@ -5,6 +5,10 @@ with the pump's own readings kept separately as "reported". The current
 calibration offsets are applied uniformly to the whole archive: the sensor
 offset is a fixed property of the sensors, and this way re-running after
 changing the calibration rewrites history consistently.
+
+The daily COP (`cop_today`) is energy based: every hour of a finished day
+gets that day's heat kWh / electricity kWh, so a daily mean of the hourly
+rows is exactly the day's COP.
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ from typing import Any
 
 from . import fields as F
 from .archive import RawLogger
+from .calibration import DailyEnergy, energy_cop
 from .processor import BurstProcessor
 
 # key -> function(values, corrected) -> value
@@ -31,14 +36,20 @@ MEASURES: dict[str, Callable[[dict[str, Any], dict[str, Any]], float | None]] = 
     "cop_reported": lambda v, c: F.cop(v),
 }
 ENERGY_KEY = "heat_produced_calibrated"
+DAILY_COP_KEY = "cop_today"
 
 
 class HourlyHistory:
     """Collects bursts into hourly mean/min/max and an energy counter."""
 
-    def __init__(self, inlet_offset: float, outlet_offset: float, before: float) -> None:
+    def __init__(self, inlet_offset: float, outlet_offset: float, before: float,
+                 day_of: Callable[[float], str] | None = None) -> None:
         self.processor = BurstProcessor.fixed(inlet_offset, outlet_offset)
         self.before = before  # only hours starting before this epoch (complete hours)
+        self.day_of = day_of  # epoch -> local date string; None: no daily COP
+        self.daily = DailyEnergy()
+        self.days: dict[str, tuple[float, float]] = {}  # finished day -> (heat, elec) kWh
+        self.first_hour: int | None = None
         self._acc: dict[str, dict[int, list[float]]] = defaultdict(lambda: defaultdict(list))
         self.energy_at_hour_end: dict[int, float] = {}
         self.bursts = 0
@@ -46,6 +57,12 @@ class HourlyHistory:
     def add(self, values: dict[str, Any], ts: float) -> None:
         corrected = self.processor.process(values, ts)
         hour = int(ts // 3600 * 3600)
+        if self.day_of is not None and ts < self.before:
+            done = self.daily.add(self.day_of(ts), ts, self.processor.energy.kwh, F.counter_kwh(values, "power_use"))
+            if done is not None:
+                self.days[done[0]] = (done[1], done[2])
+            if self.first_hour is None:
+                self.first_hour = hour
         if hour + 3600 > self.before:
             return
         self.bursts += 1
@@ -71,12 +88,30 @@ class HourlyHistory:
             {"start": h, "state": round(kwh, 4), "sum": round(kwh, 4)}
             for h, kwh in sorted(self.energy_at_hour_end.items())
         ]
+        if self.day_of is not None:
+            out[DAILY_COP_KEY] = self.daily_rows()
         return out
+
+    def daily_rows(self) -> list[dict[str, float]]:
+        """Every hour of each finished day (not the first, partial, archive
+        day) gets that day's energy-based COP as mean, min and max."""
+        if self.day_of is None or self.first_hour is None:
+            return []
+        first_day = self.day_of(self.first_hour)
+        rows = []
+        for h in range(self.first_hour, int(self.before), 3600):
+            day = self.day_of(h)
+            if day == first_day or day not in self.days:
+                continue
+            cop = energy_cop(*self.days[day])
+            if cop is not None:
+                rows.append({"start": h, "mean": cop, "min": cop, "max": cop})
+        return rows
 
 
 def build(raw_logger: RawLogger, inlet_offset: float, outlet_offset: float,
-          before: float) -> tuple[dict, float]:
+          before: float, day_of: Callable[[float], str] | None = None) -> tuple[dict, float]:
     """Blocking: replay the whole archive. Returns (rows, total calibrated kWh)."""
-    hist = HourlyHistory(inlet_offset, outlet_offset, before)
+    hist = HourlyHistory(inlet_offset, outlet_offset, before, day_of)
     raw_logger.replay(None, hist.add)
     return hist.rows(), hist.processor.energy.kwh
