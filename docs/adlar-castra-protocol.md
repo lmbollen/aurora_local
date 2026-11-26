@@ -95,7 +95,7 @@ the integral of the instantaneous values.
 | `instantpower` | **Electrical input power** | W | Confirmed | Integral 17.3 kWh ≈ `power_use` Δ 17.6 kWh |
 | `instantpower` = `32771` | Sentinel / invalid (`0x8003`) | n/a | Likely | Appeared only during restart attempts in a fault |
 | `energy2` | **Heat output now** | W | Confirmed | 0 when compressor off; integral 87.0 kWh ≈ `energy_use2` Δ 87.1 kWh. **Not a counter.** Computed from the controller flow: `energy2 ≈ 133 × param38 × raw ΔT` (r 0.991 over all running data; with `instantrate` r 0.55). In defrost it stays at a fixed ~690 W while the water is cooled by 3–6 K |
-| `instantrate` | **Water flow**, raw | ~L/h? | Uncertain | Not the flow the heat figure uses. Didn't respond when the bypass valve was opened (see §5), falls as the water heats up at constant ΔT and heat, and reads ≈ 110 in defrost with the pump at 99 % |
+| `instantrate` | **COP of the compressor alone × 100** (not a flow) | ×0.01 | Confirmed | = 100 × `energy2` / (`instantpower` − aux), aux ≈ −124 + 0.080 × fan rpm + 2.09 × pump % (about 60 W): median error 1.9 % on 14,491 running bursts, the same at every pump speed and water temperature; R² with `param38` only 0.13. 0 with the compressor off (99.8 %), ≈ 110 in defrost (690 W / ~610 W). Found by a separate analysis (home_thermal) and verified here. Earlier versions of this document and of the integration treated it as a water flow |
 | `energy_use2` | **Lifetime heat produced** | 0.01 kWh | Confirmed | 771 kWh at 2026-11-06. Counts defrost as positive heat (from `energy2`) |
 | `power_use` | **Lifetime electricity used** | 0.01 kWh | Confirmed | 152 kWh at 2026-11-06. Stepped back twice after a restart of the heat pump (−1.74 kWh 2026-11-06 11:04, −0.83 kWh 2026-11-23 22:17, both with `energy_use2` too and a ~4-minute data gap) |
 | `power_use12` | Lifetime electricity, subset | 0.01 kWh | Likely | Δ 15.0 kWh vs total 17.6, maybe compressor only |
@@ -165,7 +165,7 @@ are the condensing and evaporating temperatures from `param60` and `param58`
 | `param21` | **DC bus voltage**, V | Likely | 315 V at standstill (= 1.414 × mains − 3 V); 334–353 V running |
 | `param2` | **Expansion valve opening**, steps | Likely | 480 at rest and during defrost/oil return; ~200 at start, then 60 (58 % of running time, a minimum) |
 | `param25` | **Outdoor fan speed**, rpm | Likely | 0 off and in defrost, 400 ± 3, 450 / 500 at higher speed, ~820 briefly after defrost |
-| `param32` | **Circulation pump speed**, % | Likely | 35 standby (no flow), 70 normal, 95–99 when `instantrate` is low |
+| `param32` | **Circulation pump speed**, % | Likely | 35 standby (0 or ~0.4 m³/h flow), 70 normal, 95–99 when the controller flow is low (hot boosts) |
 | `param37` | Follows the pump command | Unknown | r 0.87 with `param32`: 14–15 / 16–17 / 19–22 at 35 / 70 / 99 % |
 | `param38` | **Actual water flow**, 0.1 m³/h (Modbus 64 "Actual Water Flow of DC Pump") | Likely | A measurement, not a setpoint: stepped 8 → 10 the moment the bypass valve was opened further (pump 99 % and compressor unchanged, ΔT fell 7.4 → 6.6 K at the same heat), and changes in 22 % of consecutive bursts at constant pump and compressor speed. The heat figure uses a finer internal value (1,040–1,245 L/h at "10"). 0 or 4 standby, 7–8 normal, ~10 in defrost |
 | `param39` | Tied to `param38` | Unknown | `param38` + 5 or + 6 (r 0.96) |
@@ -181,8 +181,9 @@ are the condensing and evaporating temperatures from `param60` and `param58`
 
 Defrost (33 events, 5–23 Nov, every 0.9–1.9 h around 0 °C outdoor, 3–5
 minutes each): `param10` = 0, compressor at 55 or 65 Hz, outdoor fan off,
-expansion valve 480, water ΔT −3 to −5 K, `instantrate` ≈ 100 although the
-pump runs at 99 %. A negative ΔT alone is not a reliable defrost signal.
+expansion valve 480, water ΔT −3 to −5 K, pump at 99 %, `param38` ~10
+(normal flow), `energy2` fixed at ~690 W. A negative ΔT alone is not a
+reliable defrost signal.
 
 ### Constant
 
@@ -196,10 +197,11 @@ pump runs at 99 %. A negative ΔT alone is not a reliable defrost signal.
 ### Consistency check
 
 `analysis/check_consistency.py` tests these meanings against physics and
-against each other on every burst (17,655 bursts, 4–23 Nov); all 31 rules
+against each other on every burst (17,655 bursts, 4–23 Nov); all 32 rules
 hold in 97–100 % of the bursts they apply to. Among them:
 
 - evaporating temperature = R290 saturation of the low pressure (99.9 %);
+- `instantrate` = 100 × heat / (power − fan − pump) within 10 % (98.3 %);
 - at rest ≥ 30 min the pressures are equal (99.9 %) and their saturation
   temperature is near outdoor (99.6 %);
 - steady running: condensing ≥ leaving water − 1.5 K (100 %), evaporating
@@ -227,10 +229,9 @@ with water temperature (0.8 K below 20 °C, 0.95 K at 28–35 °C, ~1.2 K above
 ~0.2–0.3 K too small. There are almost no bursts with the pump circulating
 and the compressor off (4), so that direct check isn't possible.
 
-The two flow readings don't follow one scale: at `param38` = 0.5 m³/h the
-raw `instantrate` reads ~400, at 0.8 m³/h ~965. The heat pump's own heat
-figure follows `param38` (see `energy2` in §4), so this integration counts
-defrost heat with `param38` too.
+`param38` is the only water flow reading (`instantrate` is a COP, §4).
+The heat pump's own heat figure follows it (see `energy2` in §4), so this
+integration counts defrost heat with `param38` too.
 
 ### Cross-check with the Aurora III Modbus register map
 
@@ -275,35 +276,38 @@ report one.
 
 ### COP and water flow
 
-At the same lift and compressor speed the measured COP is about 2 points
-lower when `instantrate` is low. This is most likely a **measurement
-artefact**, not lost efficiency: in cells matched on compressor speed and
-both refrigerant pressures (the same refrigerant cycle), electrical power is
-equal (+2 %) and the outdoor coil is at least as far below air temperature,
-yet the reported heat is 42 % lower. The water ΔT is smaller then (2.2 vs
-3.4 K), so the heat can only be equal if the real flow is about 1,250 L/h
-while `instantrate` reads about 510. The flow reading (or the heat figure
-built on it) under-reads in these conditions, mostly when the target flow
-temperature is raised and the circulation pump runs at 95–99 %; it also
-reads ≈ 100 during defrost with the pump at 99 %. Based on few matched cells
-(3–15 depending on binning). A separate heat meter would settle it. Real
-flow stoppages also happen (the P01 faults of 6 Nov had ΔT 15 K).
+Earlier versions of this section concluded that the COP drop "at low flow"
+was a measurement artefact. That analysis selected bursts by `instantrate`,
+which is itself the COP (§4), so it was circular and is withdrawn.
 
-The second flow reading (`param38`, Modbus "actual water flow") also drops
-at those times, but less: median 5 (≈ 500 L/h) when `instantrate` reads
-below 300, against 7–8 normally. The heat figure is built on `param38`, and
-the efficiency against Carnot (COP ÷ Carnot COP from the two pressures) is
-0.55 normally but 0.19–0.25 in those bursts at the same compressor speed,
-with either flow reading. So at those times the water-side heat (flow × ΔT)
-is lower than the refrigerant side suggests; which water-side reading is
-off is still open. A separate heat meter would settle it.
+A check that uses neither flow reading: heat from the refrigerant side,
+(power − aux) × (h_dis − h_liq) / (h_dis − h_suc) with R290 enthalpies
+(CoolProp) from both pressures and the discharge, suction and liquid-line
+temperatures, on 2,753 bursts with clear superheat. The compressor
+efficiency is unknown, so it is scaled to the measured heat at `param38`
+7–8 (measured / refrigerant 0.84 there). Per `param38` value:
+
+| `param38` | Bursts | Refrigerant-implied flow | Measured / refrigerant (normalised) |
+|---|---|---|---|
+| 5 | 87 | 664 L/h | 0.81 |
+| 6 | 27 | 719 L/h | 0.95 |
+| 7 | 687 | 865 L/h | 0.99 |
+| 8 | 1,366 | 932 L/h | 1.01 |
+| 9 | 281 | 1,007 L/h | 1.04 |
+| 10 | 275 | 1,261 L/h | 1.05 |
+
+So the real flow does change with `param38` (it is a measurement), but at
+the low end (5) the reading, and the heat and COP built on it, are about
+20 % low. Low readings occur mostly in hot boosts, when the floor's mixing
+valves throttle. Whether the COP itself drops with lower flow has not been
+re-analysed on `param38` yet.
 
 **Bypass valve.** On 2026-11-23 at 19:54 the bypass was set from 0.4 to
 0.3 bar with the compressor at 91 Hz and the pump at 99 %. Within one burst
 `param38` went 8 → 10, ΔT 7.4 → 6.6 K and the return temperature started
 rising faster, at unchanged power, pressures and heat: more water through
-the heat pump. `instantrate` went 421 → 442. At pump ≥ 98 % the flow
-implied by the heat figure was 800 / 910 / 1,120 L/h at 0.5 / 0.4 / 0.3 bar.
+the heat pump. At pump ≥ 98 % the flow implied by the heat figure was
+800 / 910 / 1,120 L/h at 0.5 / 0.4 / 0.3 bar.
 
 ## 6. Settings block (since 2026-11-05 07:42)
 
@@ -375,7 +379,8 @@ implemented (0.7–0.8) unless noted.
   0.01, `total_increasing`. Usable in the Energy dashboard.
 - `energy_use2` → **Heat produced**, energy, kWh, scale 0.01, `total_increasing`.
 - `runtime2` → **Compressor run time**, duration, min, `total_increasing`.
-- `instantrate` → **Water flow** (raw unit until checked against a flow meter).
+- `param38` → **Water flow** (m³/h, 0.1 steps); `instantrate` → **COP
+  compressor only (reported)** (/100, diagnostic).
 - Use the app's names: `temp_in` → **Return water (RWT)**, `temp_out` →
   **Leaving water (LWT)**, `temp_envir2` → **Outdoor temperature**,
   `temp_envir1` → **Room temperature**, `temp_box` → **DHW tank
@@ -396,9 +401,11 @@ implemented (0.7–0.8) unless noted.
   energy today (not implemented: use a utility meter helper).
 - **Fault code** sensor: map `device_fault7` → "P01" and expose the raw fault
   words for unknown codes. Fire an event on change so automations can alert.
-- **Low-flow warning** binary sensor: compressor running and
-  `instantrate` < 300 or ΔT > 10 K for 5 min. That would have warned ~15 min
-  before P01 tripped.
+- **Low-flow warning** binary sensor: compressor running and `param38` at
+  0 (below ~0.4 m³/h) or ΔT > 10 K for 5 min, defrosts excluded. On the
+  archive it warns twice, including ~15 min before the P01 of 6 Nov (the
+  `instantrate` < 300 rule used until v0.8.6 warned 13 times, 11 of them on
+  a low COP with normal flow).
 - Expose `onoff1`, `mode`, `functionadd` as diagnostic sensors with friendly
   names once their values are understood.
 - Hide `paramN` duplicates (§5) instead of creating entities for them.
@@ -521,10 +528,9 @@ the serial line between module and controller with a USB-to-serial adapter.
    and match against the stream at the same minute).
 2. Meaning of `onoff` vs `onoff1` beyond the zone bits, `dmode1`,
    `group1-4`.
-3. Exact unit and reliability of `instantrate`: it reads much lower than
-   the controller's own flow (`param38`) during the radiator boost and in
-   defrost (§5, COP and water flow). A separate flow or heat meter would
-   settle it.
+3. Accuracy of `param38` at the low end (reads ~20 % low at 5 against the
+   refrigerant side, §5 COP and water flow). A separate flow or heat meter
+   would settle it.
 4. Meaning of the E2 installer parameters, including live value P204.
 5. Full fault-bit → display-code table.
 6. The controller's input format (for local control).

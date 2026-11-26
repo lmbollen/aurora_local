@@ -3,7 +3,8 @@
 Replays an archive and tests physical and cross-field rules on every burst:
 refrigerant pressures vs temperatures (R290), discharge/suction/liquid line
 vs condensing/evaporating temperature, drives at rest vs running, defrost
-and oil-return signatures, the two flow readings, and the duplicates. Each
+and oil-return signatures, the flow reading, instantrate as the compressor
+COP, and the duplicates. Each
 rule reports how often it holds; it fails if that is below its threshold.
 
 Usage: python check_consistency.py <custom_components/aurora_local> <archive dir>
@@ -42,7 +43,6 @@ def t10(v, key):
 
 results = defaultdict(lambda: [0, 0, []])  # rule -> [checked, held, examples]
 pairs = defaultdict(list)   # for correlation rules
-flows = defaultdict(list)   # controller flow (m³/h) -> raw flow readings
 
 
 def rule(name, ok, example=None):
@@ -140,8 +140,13 @@ def on_burst(v, ts):
     if oil and running and eev is not None:
         rule("oil return: expansion valve 480 or start-up value", eev >= 60, (ex, eev))
     # --- flow readings
-    if steady and flow is not None and flow2 is not None:
-        flows[round(flow2, 1)].append(flow)  # informational: the two readings compared
+    heat = F.heat_output(v)
+    if steady and flow and heat and power and fan is not None and pump is not None:
+        aux = -124 + 0.080 * fan + 2.09 * pump  # fan and circulation pump, W
+        if power - aux > 100:
+            cop100 = 100 * heat / (power - aux)
+            rule("steady: instantrate = 100 × heat / (power − fan − pump) ±10 %",
+                 abs(cop100 - flow) <= 0.1 * flow, (ex, flow, round(cop100)))
     if steady and flow2 is not None and pump is not None:
         rule("steady: controller flow > 0 while the pump runs", flow2 > 0 or pump == 0, (ex, flow2, pump))
     # --- duplicates
@@ -167,11 +172,6 @@ def corr(xy):
 r = corr(pairs["power_current"])
 results["steady: compressor current tracks power (r ≥ 0.95)"] = [1, int(r >= 0.95), [] if r >= 0.95 else [round(r, 3)]]
 print(f"power vs compressor current: r = {r:.3f} (n = {len(pairs['power_current'])})")
-print("controller flow (m³/h) vs raw flow reading, steady running (informational):")
-for f2 in sorted(flows):
-    raw = sorted(flows[f2])
-    if len(raw) >= 30:
-        print(f"  {f2:4.1f} m³/h: n {len(raw):5d}, raw p10/50/90 {raw[len(raw) // 10]}/{raw[len(raw) // 2]}/{raw[9 * len(raw) // 10]}")
 print()
 
 THRESHOLD = {  # minimum share that must hold; physical rules allow sensor lag

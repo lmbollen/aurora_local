@@ -143,7 +143,7 @@ twin sensor named "(reported)" under *Diagnostic*.
 | Electricity consumed | The heat pump's own lifetime electricity counter, kWh |
 | Heat produced since install (corrected) | Heat delivered, kWh (corrected), counted by this integration from its first start. A defrost takes heat back out of the water, so it can go down a little then. It doesn't count while Home Assistant is off |
 | Compressor frequency, Compressor run time | Compressor speed (Hz) and total running time |
-| Water flow (raw) | Water flow as reported by the heat pump; the unit isn't known, so it has none. Useful for spotting drops (on the development unit typically 700–1,050 while running) |
+| Water flow | Water flow measured by the heat pump's controller, m³/h in 0.1 steps; it reads 0 below about 0.4 m³/h (on the development unit 0.7–1.1 while running, 0.4–0.5 when the floor's mixing valves throttle during a hot boost) |
 | Voltage | Mains voltage |
 | Quiet mode | off / on / level_2 |
 | Fault code | e.g. `P01`, `none` when there is no fault, *unknown* before the heat pump has reported its fault status |
@@ -192,8 +192,9 @@ are used in manual mode; changing one switches calibration to manual.
   valve opening**, **Outdoor fan speed** and **Circulation pump speed** (%).
   Also **Compressor discharge / suction temperature**, **Outdoor coil
   temperature**, **Liquid line temperature**, **Compressor current** and
-  **Water flow (controller)**, the controller's own flow figure in m³/h
-  (0.1 m³/h steps), next to *Water flow (raw)*.
+  **COP compressor only (reported)**: the heat pump's own COP without fan
+  and circulation pump (its field `instantrate` / 100; earlier versions
+  showed this as *Water flow (raw)*, which it isn't).
   The vendor app doesn't show these. Their meanings were worked out from the
   data and match the names in the Aurora III Modbus register map (see the
   protocol notes), so treat them as very likely rather than confirmed. The
@@ -220,10 +221,10 @@ Devices & services → Aurora Local → Configure**. You then get one when:
   codes, is updated when one clears and disappears when all have cleared.
   A fault that started while Home Assistant was off is reported too, and a
   fault that's still active after a restart is shown again.
-- **Low flow warning** turns on: the flow reading below 300 (or more than
-  10 K between leaving and return water) for 5 minutes while the compressor
-  runs. Defrosts don't count: the flow reading drops then by design, and
-  the timers pause until the defrost ends. It turns off again after 5
+- **Low flow warning** turns on: **Water flow** at 0 (below about
+  0.4 m³/h) or more than 10 K between leaving and return water, for 5
+  minutes while the compressor runs. Defrosts don't count: the timers pause
+  until the defrost ends. It turns off again after 5
   minutes of normal flow, and its
   notification disappears by itself. On the development unit this came about
   15 minutes before a `P01` fault, so it's an early prompt to check the water
@@ -304,8 +305,9 @@ difference of 3–5 K, the heat pump reported 20–40 % more heat (and COP) than
 it delivered. Your unit may differ.
 
 **Automatic (default).** When the compressor has been off for at least 20
-minutes, no water is flowing and power is below 100 W, both sensors sit in the
-same still water and should agree. The integration then measures their
+minutes and power is below 100 W, no heat is added, so both sensors see the
+same water and should agree (whether or not the pump circulates at standby
+speed: on the development unit that made 0.03 K difference). The integration then measures their
 difference once per data update (about every 1½ minutes), averages the
 measurements of the last 7 days (ignoring outliers), and corrects the
 leaving-water reading. It needs at least 30 measurements before it applies a
@@ -370,8 +372,8 @@ retention period), that counter's history is left as it is.
 ## Limitations
 
 - Read-only: no control of the heat pump.
-- Developed and tested on one heat pump. Some field meanings (water flow
-  unit, most fault codes, many `paramN` fields) are still unknown.
+- Developed and tested on one heat pump. Some field meanings (most fault
+  codes, many `paramN` fields) are still unknown.
 - The automatic calibration needs the heat pump to stand still for 20 minutes
   or more now and then. If it never does, use manual calibration.
 

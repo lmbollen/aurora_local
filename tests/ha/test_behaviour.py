@@ -244,3 +244,18 @@ async def test_finished_day_cop_written_to_statistics(hass: HomeAssistant) -> No
     assert dt_util.as_local(rows[0]["start"]).isoformat() == "2026-11-24T00:00:00+01:00"
     assert dt_util.as_local(rows[-1]["start"]).isoformat() == "2026-11-24T23:00:00+01:00"
     assert all(r["mean"] == r["min"] == r["max"] == 3.25 for r in rows)
+
+
+async def test_instantrate_is_a_cop_and_old_flow_entity_is_removed(hass: HomeAssistant) -> None:
+    registry = er.async_get(hass)
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=DEVICE_KEY, data=DATA, options=OPTIONS, minor_version=2)
+    entry.add_to_hass(hass)
+    old = registry.async_get_or_create("sensor", DOMAIN, f"{DEVICE_KEY}_water_flow", config_entry=entry)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert registry.async_get(old.entity_id) is None
+    _feed(entry, {**BURST, "instantrate": 412, "param38": 8, "param10": 1})
+    await hass.async_block_till_done()
+    assert float(_state(hass, "cop_compressor_reported").state) == 4.12
+    flow = _state(hass, "water_flow_controller")
+    assert float(flow.state) == 0.8 and registry.async_get(flow.entity_id).entity_category is None

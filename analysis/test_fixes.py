@@ -69,11 +69,11 @@ assert lib.fields.tenths({"param16": 57}, "param16") == 5.7
 assert lib.fields.tenths({"param16": 65535}, "param16") is None
 t = lib.monitoring.LowFlowTracker(hold=300, clear_hold=300)
 for s in range(0, 601, 30):  # 10 minutes of defrost-like readings
-    t.update({"param1": 55, "param10": 0, "instantrate": 100, "temp_in": 300, "temp_out": 260}, now=s)
+    t.update({"param1": 55, "param10": 0, "param38": 0, "temp_in": 300, "temp_out": 260}, now=s)
 assert not t.active(now=600), "defrost must not raise a low-flow warning"
-R_DEFROST = {"param1": 55, "param10": 0, "instantrate": 100}
-R_LOW = {"param1": 40, "param10": 1, "instantrate": 200}
-R_GOOD = {"param1": 40, "param10": 1, "instantrate": 800}
+R_DEFROST = {"param1": 55, "param10": 0, "param38": 10}
+R_LOW = {"param1": 40, "param10": 1, "param38": 0}
+R_GOOD = {"param1": 40, "param10": 1, "param38": 8}
 t = lib.monitoring.LowFlowTracker(hold=300, clear_hold=300)
 t.update(R_LOW, now=0)                      # low flow pending...
 for s in range(30, 601, 30):              # ...then a 10-minute defrost
@@ -191,8 +191,8 @@ assert cal.corrected({**run, "param1": 15, "energy2": 1555, "instantpower": 257}
 ok("COP shown at minimum speed (~250 W); unknown in standby, while ramping or at zero heat")
 
 t = lib.monitoring.LowFlowTracker(hold=300, clear_hold=300)
-low = {"param1": 40, "instantrate": 200}
-good = {"param1": 40, "instantrate": 600}
+low = {"param1": 40, "param38": 0}
+good = {"param1": 40, "param38": 7}
 for s in range(0, 301, 30):
     t.update(low, now=s)
 assert t.active(now=300)
@@ -205,9 +205,16 @@ for s in range(420, 721, 30):
     t.update(good, now=s)
 assert not t.active(now=720)
 ok("low-flow warning has hysteresis (no 22-second flaps)")
+t = lib.monitoring.LowFlowTracker(hold=300, clear_hold=300)
+for s_ in range(0, 601, 30):  # low COP (instantrate 180) with normal flow: no warning
+    t.update({"param1": 60, "param10": 1, "param38": 8, "instantrate": 180, "temp_in": 300, "temp_out": 330}, now=s_)
+assert not t.active(now=600)
+assert lib.fields.compressor_cop_reported({"instantrate": 412}) == 4.12
+assert lib.fields.compressor_cop_reported({"instantrate": 65535}) is None
+ok("low flow uses the controller's flow reading; a low COP alone is no flow warning")
 
 cal = lib.calibration.Calibration()
-off = {"param1": 0, "temp_in": 300, "temp_out": 309, "instantpower": 8, "instantrate": 0}
+off = {"param1": 0, "temp_in": 300, "temp_out": 309, "instantpower": 8, "param38": 4}  # circulating
 taken = [cal.observe(off, s) for s in range(0, 1300, 90)]
 assert not any(taken[:13]) and taken[-1], taken  # samples only after 20 min of continuous data
 cal2 = lib.calibration.Calibration()

@@ -156,6 +156,14 @@ def counter_kwh(values: dict[str, Any], key: str) -> float | None:
 HEAT_W_PER_FLOW2_K = 133
 
 
+def compressor_cop_reported(values: dict[str, Any]) -> float | None:
+    """`instantrate` / 100. Not a water flow: it is the pump's own COP without
+    fan and circulation pump, 100 × energy2 / (instantpower − ~60 W), within
+    1.9 % (median) on all running data; 0 with the compressor off."""
+    v = num(values, "instantrate")
+    return None if v is None or not 0 <= v < POWER_INVALID_FROM else round(v / 100, 2)
+
+
 def heat_from_flow(values: dict[str, Any], delta: float | None) -> int | None:
     """Heat in W from the controller's flow reading and a ΔT (negative: water cooled)."""
     flow = num(values, WATER_FLOW_2)

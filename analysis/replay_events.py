@@ -54,7 +54,7 @@ for rec in records(Path(sys.argv[2])):
             lf_reasons[tracker.reason.split()[0]] += 1
         active = tracker.active(now=ts)
         if active and lf_start is None:
-            lf_start = (t, tracker.reason, lib.fields.num(v, "instantrate"), lib.fields.delta_t(v))
+            lf_start = (t, tracker.reason, lib.fields.tenths(v, "param38"), lib.fields.delta_t(v))
         elif not active and lf_start is not None:
             episodes.append((*lf_start, t))
             lf_start = None

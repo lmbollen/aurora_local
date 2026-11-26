@@ -13,7 +13,6 @@ from .fields import (
     electrical_power,
     heat_from_flow,
     heat_output,
-    num,
     temp,
 )
 
@@ -35,9 +34,10 @@ class Calibration:
 
     The heat pump computes heat output from flow × (outlet − inlet), so an
     offset between the two sensors directly skews heat output and COP. With
-    the compressor off long enough and no water flowing, both sensors sit in
-    the same still water and should agree; their difference then is the
-    offset. On this unit that's +0.8–0.9 K (outlet reads high), about 30 %
+    the compressor off long enough (no heat added), both sensors see the same
+    water and should agree; their difference then is the offset. The pump may
+    circulate at standby speed meanwhile: on the development unit the offset
+    was 0.85 K with circulation and 0.88 K without. On this unit that's +0.8–0.9 K (outlet reads high), about 30 %
     of a typical running ΔT.
 
     auto   : offset = interquartile mean of (outlet − inlet) over settled-off
@@ -74,13 +74,11 @@ class Calibration:
             self._off_since = now
             return False
         power = electrical_power(values)
-        flow = num(values, "instantrate")
         dt = delta_t(values)
         if (
             now - self._off_since < CAL_SETTLE_SECONDS
             or dt is None
             or abs(dt) > CAL_MAX_ABS_OFFSET
-            or (flow is not None and flow > 0)
             or (power is not None and power >= CAL_MAX_IDLE_POWER)
         ):
             return False

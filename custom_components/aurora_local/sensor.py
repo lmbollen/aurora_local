@@ -273,12 +273,13 @@ SENSORS: tuple[AdlarSensorDescription, ...] = (
         value_fn=M.compressor_hz,
     ),
     AdlarSensorDescription(
-        key="water_flow",
-        name="Water flow (raw)",
+        key="cop_compressor_reported",
+        name="COP compressor only (reported)",
         sources=("instantrate",),
         state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:water-pump",
-        value_fn=lambda v: M.num(v, "instantrate"),
+        suggested_display_precision=2,
+        entity_category=DIAG,
+        value_fn=M.compressor_cop_reported,
     ),
     AdlarSensorDescription(
         key="voltage1",
@@ -351,13 +352,12 @@ SENSORS: tuple[AdlarSensorDescription, ...] = (
     ),
     AdlarSensorDescription(
         key="water_flow_controller",
-        name="Water flow (controller)",
+        name="Water flow",
         sources=(M.WATER_FLOW_2,),
         device_class=SensorDeviceClass.VOLUME_FLOW_RATE,
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR,
         suggested_display_precision=1,
-        entity_category=DIAG,
         value_fn=lambda v: M.tenths(v, M.WATER_FLOW_2),
     ),
     AdlarSensorDescription(
@@ -406,6 +406,12 @@ SENSORS: tuple[AdlarSensorDescription, ...] = (
 # duplicate another field (docs §5, checked on 19 days of data). No generic
 # entity for these. param9, param53 and param59 are not duplicates and keep
 # their generic entity; param10 (four-way valve) is covered by Defrost.
+# Entities of earlier versions that are gone, with the reason (logged).
+RETIRED = {
+    "water_flow": "'Water flow (raw)' was not a flow; see 'COP compressor only (reported)' "
+                  "and 'Water flow' (the controller's reading)",
+}
+
 COVERED = {s for d in SENSORS for s in d.sources} | {
     "onoff", "onoff1", "hot", "holiday", "fixtime", "bandUser",
     "param3", "param4", "param17", "param29", "param30", "param48", "param50",
@@ -564,6 +570,9 @@ async def async_setup_entry(
         key = reg.unique_id.removeprefix(prefix)
         if key in COVERED and key.startswith("param") and key not in named:
             _LOGGER.info("Removing %s: field %s now has a named entity", reg.entity_id, key)
+            registry.async_remove(reg.entity_id)
+        elif key in RETIRED:
+            _LOGGER.info("Removing %s: %s", reg.entity_id, RETIRED[key])
             registry.async_remove(reg.entity_id)
 
     entry_id = entry.entry_id

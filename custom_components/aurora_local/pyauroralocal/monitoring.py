@@ -6,11 +6,15 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from .fields import compressor_running, defrosting, delta_t, fault_codes, num
+from .fields import WATER_FLOW_2, compressor_running, defrosting, delta_t, fault_codes, tenths
 
-# Low-flow warning thresholds (P01 on 2026-11-06 was preceded by flow
-# ~240 and ΔT 15 K while the compressor ran at 91 Hz).
-LOW_FLOW_RATE = 300
+# Low-flow warning thresholds, on the controller's flow reading (param38,
+# 0.1 m³/h). It reads 0 below ~0.4 m³/h (no values 1-3 seen while running;
+# 4-11 otherwise). Before the P01 of 2026-11-06 it read 0 with ΔT 10-12 K at
+# 88 Hz. `instantrate` is not a flow (it is the pump's compressor COP × 100)
+# and is no longer used here: on the archive it raised 13 warnings, 11 of
+# them with normal flow and only a low COP.
+LOW_FLOW_M3H = 0.4
 HIGH_DELTA_T = 10.0
 LOW_FLOW_HOLD_SECONDS = 300
 
@@ -47,11 +51,11 @@ class LowFlowTracker:
             return
         reason = None
         if compressor_running(values):
-            flow = num(values, "instantrate")
+            flow = tenths(values, WATER_FLOW_2)
             if dt is None:
                 dt = delta_t(values)
-            if flow is not None and flow < LOW_FLOW_RATE:
-                reason = f"flow reading {flow}, below {LOW_FLOW_RATE}"
+            if flow is not None and flow < LOW_FLOW_M3H:
+                reason = f"water flow {flow} m³/h, below {LOW_FLOW_M3H}"
             elif dt is not None and dt > HIGH_DELTA_T:
                 reason = f"ΔT {dt} K, above {HIGH_DELTA_T} K"
         if reason is None:
