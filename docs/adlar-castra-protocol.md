@@ -299,8 +299,25 @@ efficiency is unknown, so it is scaled to the measured heat at `param38`
 So the real flow does change with `param38` (it is a measurement), but at
 the low end (5) the reading, and the heat and COP built on it, are about
 20 % low. Low readings occur mostly in hot boosts, when the floor's mixing
-valves throttle. Whether the COP itself drops with lower flow has not been
-re-analysed on `param38` yet.
+valves throttle.
+
+**Does the COP drop with lower flow?** Steady running (≥ 10 min after a
+start, no defrost), 15,166 bursts to 2026-11-26, regression of log COP on
+compressor Hz (and Hz²), return-water and outdoor temperature and
+`param38`, 90 % intervals from a day-block bootstrap:
+
+| COP | n | Per 0.1 m³/h less flow |
+|---|---|---|
+| Measured (water side, as shown) | 15,166 | −7.3 % (−9.2 .. −4.1) |
+| Refrigerant side (no flow reading) | 3,236 | −0.4 % (−1.5 .. +0.6) |
+
+The condensing temperature rises by 0.27 K above the return water per
+0.1 m³/h less flow (at equal heat), which by itself costs well under 1 %
+of COP. So a flow drop from ~0.9 to ~0.5 m³/h costs a few percent of real
+COP at most, while the measured COP shows ~25–30 % less: mostly the flow
+reading (and the heat built on it) reading low at low flow. The
+refrigerant-side subset needs clear superheat, so it covers ≥ 25 Hz only
+and has few low-flow bursts.
 
 **Bypass valve.** On 2026-11-23 at 19:54 the bypass was set from 0.4 to
 0.3 bar with the compressor at 91 Hz and the pump at 99 %. Within one burst
